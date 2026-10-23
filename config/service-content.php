@@ -1,0 +1,58 @@
+<?php
+
+return [
+    'study_abroad' => [
+        'label' => 'Study Abroad', 'icon' => 'study', 'eyebrow' => 'A world of possibility', 'title' => 'Your ambition. An international education.',
+        'summary' => 'Find the right course, explore universities and take your next step with clear, personal guidance.',
+        'intro' => 'Study abroad consultants and admission assistance in Bahrain & GCC. Choosing a country, university, program and budget takes careful planning. We help students and families organize each step of the journey.',
+        'items' => ['University & college selection' => 'Identify suitable institutions based on your academic background, budget and preferred destination.', 'Course selection' => 'Explore programs aligned with your education and career goals.', 'University applications' => 'Complete admission applications and organize the required documentation.', 'MBBS abroad' => 'Discuss international medical education opportunities and institution requirements.', 'Admission documentation' => 'Prepare academic certificates, transcripts and other requested records.', 'Offer letter assistance' => 'Coordination and follow-up during the university admission process.', 'Student visa assistance' => 'Document preparation and guidance after admission, subject to destination requirements.'],
+        'extra' => 'Students completing or holding Grade 12, a diploma, a bachelor’s degree, a master’s degree or other recognized qualifications may enquire.',
+        'notice' => 'Admission decisions remain with the institution. Student visa decisions remain with the relevant authority.',
+        'cta' => 'Start your study journey',
+    ],
+    'job_assistance' => [
+        'label' => 'Job Assistance', 'icon' => 'work', 'eyebrow' => 'Take your career further', 'title' => 'Connect your experience with opportunity.',
+        'summary' => 'Register your profile for international opportunities and get support with your CV, screening and documentation.',
+        'intro' => 'International job assistance and candidate registration. We help connect suitable candidates with available employer requirements through profile screening, document coordination and interview assistance.',
+        'items' => ['Transportation' => 'Heavy truck drivers, delivery drivers and commercial drivers.', 'Logistics & warehouse' => 'Warehouse workers, pickers and packers, forklift operators, loading teams and logistics assistants.', 'Manufacturing' => 'Factory workers, production operators, assembly workers and machine operators.', 'Construction' => 'General workers, skilled trades, technicians and construction support.', 'Healthcare' => 'Nurses, healthcare assistants, care assistants and support workers.', 'Hospitality' => 'Housekeeping, hotel staff, kitchen support and hospitality workers.'],
+        'extra' => 'Candidate support includes registration, CV collection, preliminary screening, document collection, employer interview coordination, employment documentation and pre-departure assistance. Eligible candidates in Bahrain, Saudi Arabia, Qatar, UAE, Kuwait, Oman and other locations may register.',
+        'notice' => 'Registration does not guarantee employment. Availability, selection, salary, work permits and conditions depend on the employer, candidate eligibility and relevant authorities.',
+        'cta' => 'Register your profile',
+    ],
+    'visa_services' => [
+        'label' => 'Visa Services', 'icon' => 'globe', 'eyebrow' => 'Travel with preparation', 'title' => 'Clear guidance for your next destination.',
+        'summary' => 'Get assistance with visa applications, document checklists, appointments and submission preparation.',
+        'intro' => 'Visa assistance in Bahrain. Forms, documents and appointment procedures vary by destination. Our team helps you understand and prepare for the process that applies to you.',
+        'items' => ['Tourist / visit visas' => 'Assistance for eligible applicants planning holidays, family visits and short stays.', 'Business visas' => 'Application assistance for eligible business travellers.', 'Student visas' => 'Documentation support for students travelling for education.', 'Employment documentation' => 'Work visa documentation where an eligible employment route is available.', 'Family / dependent applications' => 'Assistance for applicable family visa categories.', 'Application support' => 'Forms, document checklists, VFS/BLS/embassy/consulate appointments, cover letters, itineraries, review and submission guidance.'],
+        'extra' => 'Tell us your nationality, country of residence, destination and purpose of travel so our team can discuss the relevant process.',
+        'notice' => 'Visa approval or refusal is solely determined by the relevant embassy, consulate, immigration authority or authorized processing body. No approval can be guaranteed.',
+        'cta' => 'Request visa assistance',
+    ],
+    'supporting_documents' => [
+        'label' => 'Supporting Documents', 'icon' => 'document', 'eyebrow' => 'The details matter', 'title' => 'Your paperwork, better prepared.',
+        'summary' => 'Organize travel plans, reservations, insurance, cover letters and the documents your application needs.',
+        'intro' => 'Travel and visa supporting document services. A well-organized application starts with a clear checklist and documentation that reflects your actual plans.',
+        'items' => ['Flight reservation / itinerary' => 'Travel itinerary documentation according to your proposed travel plan.', 'Hotel reservation assistance' => 'Accommodation documentation for your planned destination and travel period.', 'Travel insurance assistance' => 'Help obtaining suitable travel insurance where required.', 'Cover letters' => 'Structured letters explaining the purpose of travel and relevant application information.', 'Travel itineraries' => 'Day-by-day or destination-based plans for your intended journey.', 'Document organization' => 'Arrange documents according to the applicable checklist.', 'Other support' => 'PCC assistance, forms, appointments, embassy/VFS/BLS documentation and translation coordination.'],
+        'extra' => 'We also assist with appointments at VFS, BLS, embassies, consulates and relevant immigration departments.',
+        'notice' => 'Required documents depend on your destination, nationality, application category and circumstances.',
+        'cta' => 'Get document assistance',
+    ],
+    'attestation' => [
+        'label' => 'Attestation Services', 'icon' => 'seal', 'eyebrow' => 'Prepared for international use', 'title' => 'Document authentication, step by step.',
+        'summary' => 'Get support with educational, personal and commercial document attestation and authentication.',
+        'intro' => 'Document attestation services in Bahrain. International use may require authentication, attestation, legalization or apostille, depending on the issuing country, destination and purpose.',
+        'items' => ['Educational documents' => 'Degree certificates, diplomas, school certificates, transcripts and other academic records.', 'Personal documents' => 'Birth certificates, marriage certificates and other eligible personal documents.', 'Commercial documents' => 'Eligible company and commercial records requiring authentication.', 'Process coordination' => 'Notary or issuing authority, relevant government authentication, embassy or consulate, and destination requirements.'],
+        'extra' => 'Share the type of document, its issuing country, destination and purpose. Our team will help identify the applicable steps.',
+        'notice' => 'The exact procedure varies by document and country.',
+        'cta' => 'Get attestation assistance',
+    ],
+    'employer_request' => [
+        'label' => 'Employer Recruitment', 'icon' => 'people', 'eyebrow' => 'People who move business forward', 'title' => 'Support for your international workforce.',
+        'summary' => 'Discuss candidate sourcing, screening, interviews and documentation for your workforce requirements.',
+        'intro' => 'Are you an employer looking for international talent? We support organizations seeking suitable international candidates for current and future requirements.',
+        'items' => ['Candidate sourcing' => 'Find relevant profiles for your confirmed workforce needs.', 'Screening & shortlisting' => 'CV review, preliminary interviews and candidate shortlists.', 'Interview coordination' => 'Schedule employer interviews and coordinate communication.', 'Documentation & mobilization' => 'Document collection, visa support, coordination and mobilization assistance.'],
+        'extra' => 'Sourcing markets may include the GCC, India, Nepal, Philippines, Sri Lanka, Bangladesh, Pakistan and other relevant locations, depending on the role and legal recruitment requirements.',
+        'notice' => 'Recruitment support depends on confirmed employer requirements and applicable labour and immigration regulations.',
+        'cta' => 'Request manpower',
+    ],
+];
