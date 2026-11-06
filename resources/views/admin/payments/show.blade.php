@@ -4,7 +4,7 @@
 <p><a href="{{ route('admin.payments.index') }}">← All payments</a></p><h1>{{ $payment->transaction_reference }}</h1>
 <div class="grid grid-2"><section class="panel"><h2>Transaction details</h2><dl>
     <dt>Customer</dt><dd>{{ $payment->customer_name }}</dd><dt>Contact</dt><dd>{{ $payment->phone }}<br>{{ $payment->email ?: 'No email supplied' }}</dd>
-    <dt>Service</dt><dd>{{ config('applications.services.'.$payment->service.'.label', $payment->service) }}</dd>
+    <dt>Service</dt><dd>{{ $payment->serviceLabel() }}</dd>
     <dt>Expected amount</dt><dd>BHD {{ $payment->amount }}</dd><dt>Received amount</dt><dd>BHD {{ $payment->amount_received }}</dd>
     <dt>Status</dt><dd><span class="badge">{{ str($payment->status)->replace('_', ' ')->title() }}</span></dd>
     <dt>Channel</dt><dd>{{ $payment->channel === 'offline' ? 'Offline receipt recorded by an administrator' : 'Online payment request' }}</dd>

@@ -15,6 +15,24 @@ class Payment extends Model
 
     public const STATUSES = ['pending', 'paid', 'partially_paid', 'failed', 'refunded'];
 
+    /**
+     * Selectable payment services: application services plus standalone fee types.
+     *
+     * @return array<string, string>
+     */
+    public static function serviceOptions(): array
+    {
+        return collect(config('applications.services'))
+            ->map(fn (array $service): string => $service['label'])
+            ->merge(config('payments.fee_services'))
+            ->all();
+    }
+
+    public function serviceLabel(): string
+    {
+        return static::serviceOptions()[$this->service] ?? (string) $this->service;
+    }
+
     protected $fillable = [
         'application_id', 'transaction_reference', 'entered_reference', 'gateway',
         'gateway_reference', 'channel', 'customer_name', 'phone', 'email', 'service',

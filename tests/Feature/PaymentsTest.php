@@ -57,6 +57,18 @@ class PaymentsTest extends TestCase
         $this->get(route('admin.payments.offline.create'))->assertOk();
     }
 
+    public function test_payment_forms_offer_registration_after_visa_and_work_permit_fees(): void
+    {
+        $this->get(route('pay'))->assertOk()
+            ->assertSee('Registration Fee')
+            ->assertSee('After Visa Fee')
+            ->assertSee('Work Permit Fee');
+
+        $this->post(route('pay.store'), array_replace($this->paymentData(), ['service' => 'registration_fee']))
+            ->assertSessionHasNoErrors()->assertRedirect();
+        $this->assertDatabaseHas('payments', ['service' => 'registration_fee']);
+    }
+
     public function test_enabled_adapter_redirects_only_to_approved_checkout_and_keeps_payment_pending(): void
     {
         $this->enableTestGateway();

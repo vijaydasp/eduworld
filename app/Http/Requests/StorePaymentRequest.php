@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Payment;
 use App\Services\Payments\BhdAmount;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -31,7 +32,7 @@ class StorePaymentRequest extends FormRequest
             'phone' => ['required', 'string', 'regex:/\A[+0-9() .-]{7,30}\z/'],
             'email' => ['nullable', 'email:rfc', 'max:255'],
             'entered_reference' => ['nullable', 'string', 'max:100'],
-            'service' => ['required', Rule::in(array_keys(config('applications.services')))],
+            'service' => ['required', Rule::in(array_keys(Payment::serviceOptions()))],
             'amount' => ['required', 'string', function (string $attribute, mixed $value, Closure $fail): void {
                 try {
                     $minor = BhdAmount::minorUnits((string) $value);

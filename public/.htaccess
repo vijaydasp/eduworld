@@ -5,6 +5,10 @@
 
     RewriteEngine On
 
+    # Redirect www.eduworld.bh to eduworld.bh
+    RewriteCond %{HTTP_HOST} ^www\.eduworld\.bh(?::[0-9]+)?$ [NC]
+    RewriteRule ^ https://eduworld.bh%{REQUEST_URI} [R=308,L,NE]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
