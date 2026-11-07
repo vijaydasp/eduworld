@@ -60,9 +60,7 @@ class PaymentsTest extends TestCase
     public function test_payment_forms_offer_registration_after_visa_and_work_permit_fees(): void
     {
         $this->get(route('pay'))->assertOk()
-            ->assertSee('Registration Fee')
-            ->assertSee('After Visa Fee')
-            ->assertSee('Work Permit Fee');
+            ->assertSeeInOrder(['Registration Fee', 'After Visa Fee', 'Work Permit Fee', 'Other']);
 
         $this->post(route('pay.store'), array_replace($this->paymentData(), ['service' => 'registration_fee']))
             ->assertSessionHasNoErrors()->assertRedirect();

@@ -16,16 +16,27 @@ class Payment extends Model
     public const STATUSES = ['pending', 'paid', 'partially_paid', 'failed', 'refunded'];
 
     /**
-     * Selectable payment services: application services plus standalone fee types.
+     * Selectable payment services: application services, standalone fee types,
+     * with the catch-all "Other" option kept last.
      *
      * @return array<string, string>
      */
     public static function serviceOptions(): array
     {
-        return collect(config('applications.services'))
+        $options = collect(config('applications.services'))
             ->map(fn (array $service): string => $service['label'])
-            ->merge(config('payments.fee_services'))
             ->all();
+
+        $other = $options['other'] ?? null;
+        unset($options['other']);
+
+        $options = array_merge($options, config('payments.fee_services'));
+
+        if ($other !== null) {
+            $options['other'] = $other;
+        }
+
+        return $options;
     }
 
     public function serviceLabel(): string
