@@ -34,9 +34,10 @@ class AccessAndSettingsTest extends TestCase
     public function test_public_pages_render_and_sitemap_excludes_drafts(): void
     {
         $draft = Post::factory()->create(['is_published' => false, 'slug' => 'private-draft']);
-        foreach (['/', '/services', '/apply', '/contact', '/news', '/pay', '/privacy-policy', '/terms', '/payment-terms', '/refund-policy', '/disclaimer', '/admin/login'] as $path) {
+        foreach (['/', '/services', '/apply', '/contact', '/news', '/privacy-policy', '/terms', '/payment-terms', '/refund-policy', '/disclaimer', '/admin/login'] as $path) {
             $this->get($path)->assertOk()->assertHeader('X-Content-Type-Options', 'nosniff');
         }
+        $this->get('/pay')->assertRedirect(route('contact'))->assertHeader('X-Content-Type-Options', 'nosniff');
         $this->get('/sitemap.xml')->assertOk()->assertHeader('Content-Type', 'application/xml; charset=UTF-8')->assertDontSee($draft->slug);
         $this->get('/robots.txt')->assertOk()->assertSee('Disallow: /admin');
     }

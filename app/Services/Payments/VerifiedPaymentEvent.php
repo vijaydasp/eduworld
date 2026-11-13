@@ -14,9 +14,14 @@ final readonly class VerifiedPaymentEvent
         public string $amount,
         public string $amountReceived,
         public string $currency,
+        public ?string $providerReference = null,
     ) {
         if ($eventId === '' || strlen($eventId) > 150 || $transactionReference === '' || $gatewayReference === '' || strlen($gatewayReference) > 150 || ! in_array($status, ['paid', 'partially_paid', 'failed', 'refunded'], true)) {
             throw new InvalidArgumentException('Invalid verified payment event.');
+        }
+
+        if ($providerReference !== null && ($providerReference === '' || strlen($providerReference) > 150)) {
+            throw new InvalidArgumentException('Invalid provider reference.');
         }
 
         BhdAmount::minorUnits($amount);
@@ -28,6 +33,7 @@ final readonly class VerifiedPaymentEvent
         return hash('sha256', json_encode([
             $this->transactionReference, $this->gatewayReference, $this->status,
             BhdAmount::normalize($this->amount), BhdAmount::normalize($this->amountReceived), $this->currency,
+            $this->providerReference,
         ], JSON_THROW_ON_ERROR));
     }
 }

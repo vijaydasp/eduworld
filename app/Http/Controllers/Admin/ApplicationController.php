@@ -52,7 +52,7 @@ class ApplicationController extends Controller
     public function show(Application $application): View
     {
         $relation = config('applications.services.'.$application->service_type.'.relation');
-        $application->load(['documents', 'statusHistory.user', 'payments']);
+        $application->load(['documents', 'statusHistory.user', 'payments', 'paymentRequests.payment', 'paymentRequests.createdBy']);
         $details = $relation ? $application->load($relation)->getRelation($relation) : null;
 
         return view('admin.applications.show', compact('application', 'details'));

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreOfflinePaymentRequest;
 use App\Models\Payment;
+use App\Models\PaymentRequest;
 use App\Services\Payments\PaymentManager;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -19,30 +20,54 @@ class PaymentController extends Controller
             'q' => ['nullable', 'string', 'max:150'],
             'status' => ['nullable', Rule::in(Payment::STATUSES)],
             'channel' => ['nullable', Rule::in(['gateway', 'offline'])],
+            'type' => ['nullable', Rule::in(['application', 'standalone', 'legacy'])],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', Rule::when($request->filled('from'), 'after_or_equal:from')],
         ]);
-        $payments = Payment::with('application')
+        $payments = Payment::with(['application', 'enteredApplication', 'paymentRequest.application'])
             ->when($filters['q'] ?? null, function ($query, $keyword) {
                 $query->where(function ($query) use ($keyword) {
                     foreach (['transaction_reference', 'entered_reference', 'customer_name', 'email', 'phone', 'offline_reference'] as $field) {
                         $query->orWhere($field, 'like', '%'.$keyword.'%');
                     }
                     $query->orWhereHas('application', fn ($application) => $application->where('reference_number', 'like', '%'.$keyword.'%'));
+                    $query->orWhereHas('enteredApplication', fn ($application) => $application->where('reference_number', 'like', '%'.$keyword.'%'));
+                    $query->orWhereHas('paymentRequest', fn ($request) => $request->where('customer_email', 'like', '%'.$keyword.'%'));
                 });
             })
             ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
             ->when($filters['channel'] ?? null, fn ($query, $channel) => $query->where('channel', $channel))
+            ->when($filters['type'] ?? null, fn ($query, string $type) => match ($type) {
+                'application' => $query->where(fn ($query) => $query
+                    ->whereNotNull('application_id')
+                    ->orWhereHas('enteredApplication')),
+                'standalone' => $query->whereHas('paymentRequest', fn ($request) => $request->standaloneRequests()),
+                'legacy' => $query->whereNull('application_id')
+                    ->whereDoesntHave('enteredApplication')
+                    ->whereDoesntHave('paymentRequest'),
+            })
             ->when($filters['from'] ?? null, fn ($query, $date) => $query->whereDate('created_at', '>=', $date))
             ->when($filters['to'] ?? null, fn ($query, $date) => $query->whereDate('created_at', '<=', $date))
             ->latest()->paginate(20)->withQueryString();
 
-        return view('admin.payments.index', compact('payments'));
+        // Payment requests only appear here once checkout starts and a payment exists.
+        // Surface outstanding requests so standalone and application requests awaiting
+        // payment are visible in the payments workspace too.
+        $pendingRequests = PaymentRequest::query()
+            ->with(['application', 'payment'])
+            ->where('status', 'sent')
+            ->whereNull('payment_id')
+            ->where('expires_at', '>', now())
+            ->latest('id')
+            ->limit(10)
+            ->get();
+
+        return view('admin.payments.index', compact('payments', 'pendingRequests'));
     }
 
     public function show(Payment $payment): View
     {
-        $payment->load('application', 'recordedBy');
+        $payment->load('application', 'enteredApplication', 'recordedBy', 'paymentRequest.application');
         $events = $payment->events()->latest()->paginate(20);
 
         return view('admin.payments.show', compact('payment', 'events'));
@@ -58,14 +83,6 @@ class PaymentController extends Controller
         $payment = $payments->recordOffline($request->validated());
 
         return to_route('admin.payments.show', $payment)->with('success', 'Offline receipt recorded. This is an administrative record of funds received outside the website.');
-    }
-
-    public function link(Request $request, Payment $payment, PaymentManager $payments): RedirectResponse
-    {
-        $data = $request->validate(['application_reference' => ['required', 'string', 'exists:applications,reference_number']]);
-        $payments->link($payment, $data['application_reference']);
-
-        return back()->with('success', 'Payment linked to the application.');
     }
 
     public function refundOffline(Request $request, Payment $payment, PaymentManager $payments): RedirectResponse

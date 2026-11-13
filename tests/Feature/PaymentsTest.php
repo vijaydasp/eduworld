@@ -29,57 +29,55 @@ class PaymentsTest extends TestCase
         config(['payments.driver' => 'disabled']);
     }
 
-    public function test_disabled_checkout_records_only_pending_intent_without_linking_a_guessed_reference(): void
+    public function test_public_payment_creation_is_disabled_and_creates_no_records(): void
     {
         $application = $this->application();
-        $response = $this->post(route('pay.store'), $this->paymentData() + [
+
+        $this->get(route('pay'))->assertRedirect(route('contact'));
+
+        $this->post(route('pay.store'), $this->paymentData() + [
             'entered_reference' => $application->reference_number,
             'application_id' => $application->id, 'status' => 'paid', 'amount_received' => '12.345',
-        ]);
-        $response->assertRedirect();
-        $payment = Payment::sole();
-        $this->assertSame('pending', $payment->status);
-        $this->assertSame('12.345', $payment->amount);
-        $this->assertSame('0.000', $payment->amount_received);
-        $this->assertNull($payment->application_id);
+        ])->assertRedirect(route('contact'));
+
+        $this->assertDatabaseCount('payments', 0);
         $this->assertSame('pending', $application->fresh()->payment_status);
-        $this->get($response->headers->get('Location'))->assertOk()->assertSee('Your payment request is recorded');
         Notification::assertNothingSent();
     }
 
     public function test_payment_pages_render_and_admin_filters_handle_end_date_without_start_date(): void
     {
         $payment = Payment::factory()->create();
-        $this->get(route('pay'))->assertOk()->assertSee('Online checkout is not yet available');
+        $this->get(route('pay'))->assertRedirect(route('contact'));
         $this->actingAs(User::factory()->create(['role' => 'super_admin', 'is_active' => true]));
         $this->get(route('admin.payments.index', ['to' => now()->toDateString()]))->assertOk()->assertSee($payment->transaction_reference);
         $this->get(route('admin.payments.show', $payment))->assertOk();
         $this->get(route('admin.payments.offline.create'))->assertOk();
     }
 
-    public function test_payment_forms_offer_registration_after_visa_and_work_permit_fees(): void
+    public function test_public_payment_form_is_no_longer_offered(): void
     {
-        $this->get(route('pay'))->assertOk()
-            ->assertSeeInOrder(['Registration Fee', 'After Visa Fee', 'Work Permit Fee', 'Other']);
+        $this->get(route('pay'))->assertRedirect(route('contact'));
 
         $this->post(route('pay.store'), array_replace($this->paymentData(), ['service' => 'registration_fee']))
-            ->assertSessionHasNoErrors()->assertRedirect();
-        $this->assertDatabaseHas('payments', ['service' => 'registration_fee']);
+            ->assertRedirect(route('contact'));
+        $this->assertDatabaseCount('payments', 0);
     }
 
-    public function test_enabled_adapter_redirects_only_to_approved_checkout_and_keeps_payment_pending(): void
+    public function test_public_route_cannot_reach_an_enabled_gateway_adapter(): void
     {
         $this->enableTestGateway();
         config(['payments.checkout_hosts' => ['checkout.example.test']]);
-        $this->post(route('pay.store'), $this->paymentData())->assertRedirect('https://checkout.example.test/session');
-        $this->assertDatabaseHas('payments', ['gateway_reference' => 'test-session', 'status' => 'pending']);
+        $this->post(route('pay.store'), $this->paymentData())->assertRedirect(route('contact'));
+        $this->assertDatabaseCount('payments', 0);
         Notification::assertNothingSent();
     }
 
-    public function test_payment_form_rejects_fraction_precision_and_non_positive_amounts(): void
+    public function test_public_payment_route_creates_nothing_for_every_amount(): void
     {
-        foreach (['1.2345', '-1', '0', '1e3'] as $amount) {
-            $this->post(route('pay.store'), array_replace($this->paymentData(), ['amount' => $amount]))->assertSessionHasErrors('amount');
+        foreach (['1.2345', '-1', '0', '1e3', '12.345'] as $amount) {
+            $this->post(route('pay.store'), array_replace($this->paymentData(), ['amount' => $amount]))
+                ->assertRedirect(route('contact'));
         }
         $this->assertDatabaseCount('payments', 0);
     }
@@ -124,6 +122,23 @@ class PaymentsTest extends TestCase
         $this->assertSame('paid', $application->fresh()->payment_status);
         $this->assertDatabaseCount('payment_events', 1);
         $this->assertDatabaseHas('activity_logs', ['action' => 'payment.gateway_verified', 'subject_id' => $payment->id]);
+        Notification::assertSentOnDemandTimes(PaymentConfirmed::class, 1);
+    }
+
+    public function test_settlement_accepts_a_previously_issued_checkout_reference(): void
+    {
+        $this->enableTestGateway();
+        $payment = Payment::factory()->create([
+            'gateway' => 'test-gateway',
+            'gateway_reference' => 'current-session',
+            'gateway_response' => ['previous_checkout_references' => ['previous-session']],
+        ]);
+        $event = array_replace($this->event($payment), ['gateway_reference' => 'previous-session']);
+
+        $this->sendWebhook($event)->assertOk();
+
+        $this->assertSame('paid', $payment->fresh()->status);
+        $this->assertSame('12.345', $payment->fresh()->amount_received);
         Notification::assertSentOnDemandTimes(PaymentConfirmed::class, 1);
     }
 
@@ -197,17 +212,6 @@ class PaymentsTest extends TestCase
         $this->actingAs(User::factory()->create(['role' => 'super_admin', 'is_active' => true]));
         $this->post(route('admin.payments.offline.refund', $payment), ['reason' => 'Attempt to bypass provider verification', 'confirmed' => '1'])->assertStatus(409);
         $this->assertSame('paid', $payment->fresh()->status);
-    }
-
-    public function test_authorized_admin_can_link_payment_to_application(): void
-    {
-        $application = $this->application();
-        $payment = Payment::factory()->create(['status' => 'paid', 'amount_received' => '12.345']);
-        $this->actingAs(User::factory()->create(['role' => 'admin', 'is_active' => true]));
-        $this->patch(route('admin.payments.link', $payment), ['application_reference' => $application->reference_number])->assertRedirect();
-        $this->assertSame($application->id, $payment->fresh()->application_id);
-        $this->assertSame('paid', $application->fresh()->payment_status);
-        $this->assertDatabaseHas('activity_logs', ['action' => 'payment.application_linked']);
     }
 
     private function enableTestGateway(): void

@@ -8,7 +8,7 @@ $number = fn (string $label, int $min = 0, int $max = 9999) => ['label' => $labe
 return [
     'admin_email' => env('ADMIN_EMAIL'),
     'max_document_kb' => 10240,
-    'statuses' => ['new' => 'New', 'under_review' => 'Under Review', 'documents_required' => 'Documents Required', 'processing' => 'Processing', 'completed' => 'Completed', 'closed' => 'Closed'],
+    'statuses' => ['new' => 'New', 'under_review' => 'Under Review', 'documents_required' => 'Documents Required', 'approved' => 'Approved', 'processing' => 'Processing', 'completed' => 'Completed', 'closed' => 'Closed'],
     'payment_statuses' => ['pending' => 'Pending', 'paid' => 'Paid', 'partially_paid' => 'Partially Paid', 'failed' => 'Failed', 'refunded' => 'Refunded'],
     'services' => [
         'study_abroad' => [

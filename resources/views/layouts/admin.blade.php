@@ -12,6 +12,7 @@
 <div class="admin-main"><header class="admin-top"><div><strong>{{ auth()->user()->name }}</strong><span>{{ ucwords(str_replace('_',' ',auth()->user()->role)) }}</span></div><form method="post" action="{{ route('logout') }}">@csrf<button class="button-quiet">Sign out</button></form></header>
 <main id="main" class="admin-content">
 @if(session('success'))<div class="alert success" role="status">{{ session('success') }}</div>@endif
+@if(session('error'))<div class="alert error" role="alert">{{ session('error') }}</div>@endif
 @if($errors->any())<div class="alert error" role="alert"><strong>Please check these details:</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
 @yield('content')
 </main></div>@stack('scripts')</body></html>

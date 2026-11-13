@@ -1,31 +1,175 @@
 # Payment operations and provider integration
 
-The shipped configuration records pending payment requests and explicitly tells customers that online checkout is unavailable. It never collects card details or simulates payment success. `PAYMENT_GATEWAY=disabled` is the default. Providing API credentials alone does not enable checkout: an approved provider adapter must be implemented, reviewed and registered first.
+Edu World supports two payment-request workflows:
 
-## Records and access
+1. **Application payment requests** — created by staff from an application after the agreed fee is finalized.
+2. **Standalone payment requests** — created by authorized staff from the Payments section for a customer with no application.
 
-`payments` contains the payer details, customer-supplied reference, optional administrator-linked application, expected amount, cumulative received amount, channel, provider session reference, status and settlement dates. BHD is stored with three decimal places. Calculations convert strings to integer fils; floating-point values are not used for settlement decisions. The transaction reference derives from the database-generated payment ID inside a transaction.
+Both workflows use the same `payments`, `payment_requests`, `payment_events` and AFS (OPPWA) infrastructure. Customer card details are always entered on the provider’s checkout widget; Edu World never stores card numbers or security codes.
 
-Public references do not look up or automatically bind applications. The signed receipt link expires in 24 hours, has private/no-store headers, and shows no application documents. Browser query parameters cannot change settlement state. Staff use the authenticated, authorized payment page to link a payment after checking the payer, service and application details.
+## Currency policy
 
-Administrators and super administrators may search and link payment records. Only super administrators may record funds received offline or record a completed full offline refund. These operations are labeled as offline, audited and never transfer money. The offline refund operation rejects online gateway transactions. Record verification details and the bank/cash receipt reference; do not put credentials, card details or security codes in notes.
+BHD is the only supported currency. Amounts are stored and compared with three decimal places using integer fils (`BhdAmount`); floating-point arithmetic is never used for settlement decisions. The existing AFS currency check remains strict: a verified event must report `BHD` and the exact stored amount.
 
-Application payment status summarizes its linked payment records. It is not an invoice or general-ledger balance. Link records carefully and avoid representing the same receipt more than once.
+## Public payment creation is disabled
 
-## Integrating the approved provider
+The public `/pay` GET and POST routes no longer display or accept an arbitrary payment form. Both redirect to the contact page. Only signed links issued by staff can start a new payment:
 
-1. Add an adapter in `app/Services/Payments` implementing `PaymentGatewayInterface`. Use only the approved provider's official SDK/API and its documented verification process. Keep credentials in environment variables; do not store sensitive request/response bodies.
-2. Register its class under `payments.gateways` in `config/payments.php`, add the provider's exact HTTPS checkout hostname(s) to `payments.checkout_hosts`, and set `PAYMENT_GATEWAY` to its key. The adapter's `name()` must match that key. `available()` must return false until all required configuration is present.
-3. In `initiate`, create a hosted checkout for the stored BHD amount and currency. Use `transaction_reference` as the provider idempotency key. Return a `GatewayCheckout` containing the HTTPS URL and stable provider checkout/session reference. The provider must not depend on a browser return to confirm payment.
-4. Configure the provider's POST webhook as `https://your-domain/payments/webhook/{gateway}`. This is the only payment route excluded from CSRF checks. `verifyWebhook()` must authenticate the exact raw request, validate signature time/replay protection and perform server-to-server lookup when required by the provider. Check merchant/account identity and use a stable event ID. Throw `InvalidPaymentWebhook` for anything unverified. Do not construct a verified event directly from untrusted request data.
-5. Return `VerifiedPaymentEvent` with the stable event ID, our transaction reference, original checkout reference, original expected amount, cumulative received amount and `BHD`. Full payment requires received amount to equal expected amount. Partial settlement requires a positive received amount below expected amount. Failed and fully refunded events use zero received amount. This version handles full refunds of received funds; a provider offering partial refunds needs an explicit reviewed extension before enabling that feature.
-6. Test sandbox success, decline, cancellation, partial settlement, refund, malformed/signature-expired callbacks, wrong merchant/session/amount/currency, concurrent duplicate delivery, duplicate initiation and out-of-order delivery. Confirm the provider retries transient webhook errors, including notifications delivered before the checkout reference is saved or before the settlement preceding a refund.
-7. Run payment tests, apply the database migrations, configure HTTPS and a durable queue worker, verify actual email delivery, then perform an approved low-value live transaction and refund before public launch.
+- `GET /pay/request/{public_id}` — signed request review page.
+- `POST /pay/request/{public_id}` — signed “Pay securely via AFS” action from the review page.
+- `GET /pay/request/{public_id}/checkout` — signed email link that starts (or reuses) the checkout and opens the AFS COPYandPAY form directly.
+- `GET /pay/checkout/{payment}` — signed widget checkout page.
+- `GET /pay/return/{reference}` — provider return/reconciliation.
+- `GET /pay/receipt/{payment}` — signed receipt.
+- `POST /payments/webhook/{gateway}` — provider webhook.
+
+Legacy payment and transaction records are preserved. Old generic creation URLs cannot create new payment records.
+
+## Application payment workflow
+
+1. Student submits an application; the application reference is generated by the existing application system.
+2. Staff review and edit the application. The application reference is immutable during edits.
+3. Staff finalize the agreed fee on the application detail page.
+4. `PaymentRequestManager::create()` creates a `payment_requests` record with `type = application`, linked automatically through the application relationship. No manual application ID is accepted from the form or browser.
+5. The request is emailed to the application’s current registered email address.
+6. The email button is a signed link that starts the checkout and opens the AFS COPYandPAY card form directly. The customer can also open the request review page, which shows the application reference, student name, service/course, fixed amount and expiry before continuing to AFS.
+7. AFS settlement is verified server-to-server through the existing webhook and shopper-return flows.
+8. The payment, payment request and application payment status are updated together. A confirmation email is sent once after a verified full payment.
+
+Existing application submission, editing, document upload, status management, payment history, resend and cancellation controls are unchanged.
+
+## Standalone payment workflow (admins only)
+
+Staff with `manage-payments` can open **Payments → Create payment request** and enter:
+
+- Customer name (required, max 150 characters).
+- Customer email (required, valid email, max 254 characters).
+- Customer phone (optional, max 30 characters).
+- Amount in BHD (positive, at most three decimal places).
+- Payment description (required, max 255 characters).
+- Link validity (1–30 days).
+- Confirmation checkbox.
+
+The standalone form has no application ID field, application selector or student-linking options. `application_id` is always `NULL`; `type` is `standalone`; BHD is fixed server-side. Browser input cannot change the amount, customer identity, description or application link.
+
+On creation the system stores the request, records an audit entry, and emails the secure payment link to the customer. The customer cannot edit the amount or details. A verified AFS payment creates a payment with `application_id = NULL` and never updates any application. The request is marked paid and a standalone confirmation email is sent.
+
+### Standalone request list and detail
+
+`/admin/payments/requests` lists standalone requests with customer, amount, description, status, created/sent/expiry/paid dates, associated transaction and receipt links. Filters cover status and customer/request search. The dynamic request routes are declared before `/admin/payments/{payment}` to avoid route conflicts.
+
+Payment detail pages identify each payment as application-linked, application-linked from an entered reference, standalone request payment, or legacy/unlinked. A customer-typed reference that matches an application is shown as a reconciliation hint and linked for review; it is never treated as a verified binding for authorization or settlement. The payments workspace also lists outstanding payment requests (including standalone requests) that have not started checkout, so they remain visible before a payment record exists.
+
+## Resend, expiry and cancellation
+
+- Resend is allowed only while a request is active (`status = sent` and not expired). The email is sent to the stored recipient (application email or standalone customer email).
+- An expired link is never resent. Staff must create a new request; existing request history is retained.
+- Paid and cancelled requests are never silently reactivated.
+- Cancelling an unpaid request prevents new checkout attempts from that request.
+- An already-started gateway checkout may still be completed by the customer. If AFS verifies that payment, the settlement is preserved and the request is recorded as paid rather than falsely reported as cancelled. A request with a settled, partially settled or refunded payment cannot be cancelled.
+
+## Checkout lifecycle and reuse
+
+`PaymentRequestManager::start()` creates or reuses the single payment attempt attached to a request. Amounts and customer details always come from the stored request, never the browser.
+
+`PaymentManager::checkout()` is idempotent for AFS widget checkouts:
+
+- A pending payment with a recent valid `gateway_reference` is resumed instead of creating another AFS checkout.
+- The checkout-start time and previously issued checkout references are stored in `payments.gateway_response`.
+- Repeated Pay clicks, browser retries and concurrent requests therefore keep the same provider session.
+- When the reuse window expires, a new AFS session is created safely. Previously issued references are retained so a customer completing the older widget session is still settled correctly.
+- The payment row is locked during checkout initiation/reuse to avoid duplicate concurrent sessions.
+- AFS verification, merchant checks, amount checks, webhook cryptography and idempotency are unchanged.
+
+The signed email link (`GET /pay/request/{public_id}/checkout`) is lazy: the AFS session is created only when the customer clicks it, never when the email is dispatched. Because email security scanners may prefetch links, the endpoint is signed, throttled and idempotent — a prefetch reuses the same pending payment/checkout and never charges the customer.
+
+The reuse window defaults to 25 minutes and can be adjusted with `payments.checkout_reuse_minutes` if provider session lifetimes change.
+
+## AFS (OPPWA COPYandPAY)
+
+AFS is registered as the `afs` driver. Required environment configuration:
+
+```dotenv
+PAYMENT_GATEWAY=afs
+AFS_BASE_URL=https://eu-test.oppwa.com/   # production: https://eu-prod.oppwa.com/
+AFS_ENTITY_ID=...
+AFS_ACCESS_TOKEN=...
+AFS_WEBHOOK_SECRET=...                    # 64-character hexadecimal key from AFS Administration → Webhooks
+PAYMENT_WEBHOOK_SECRET=...                # existing generic provider secret, if used by another adapter
+AFS_BRANDS="VISA MASTER"
+AFS_DESCRIPTOR="Edu World"
+AFS_TEST_MODE=                            # optional: INTERNAL or EXTERNAL; never sent to production
+```
+
+Do not commit real credentials or change production environment variables from this repository.
+
+Checkout creation is server-to-server (`POST /v1/checkouts`) using the stored BHD amount and `transaction_reference` as `merchantTransactionId`. AFS accepts at most two decimal places (`#.##`), so a three-decimal BHD value such as `12.345` is rounded half-up to `12.35` only for the gateway request; the stored amount keeps three-decimal precision. Settlement compares the gateway amount using the same rounding, so a verified charge of `12.35` settles a `12.345` request without an amount mismatch. The returned checkout ID is rendered with the COPYandPAY widget on our own signed page; shoppers are not redirected to a provider URL. The widget page has a restrictive Content Security Policy.
+
+Webhook notifications (`POST /payments/webhook/afs`) are AES-256-GCM bodies decrypted with `X-Initialization-Vector` and `X-Authentication-Tag`. The decrypted `type` must be `PAYMENT`, the merchant entity must match `AFS_ENTITY_ID`, and embedded body amounts/statuses are ignored. The gateway re-queries `GET /v1/payments/{id}` and settles only from that authoritative response. The shopper return similarly queries `GET /v1/checkouts/{id}/payment`. Result codes are classified by `AfsResultCode`; only documented success codes settle, documented declines fail, and open/unknown states return `202` with no change. Only full refunds of settled funds are supported.
+
+### Testing 3D Secure challenges
+
+Use any future expiry date and any three-digit CVV.
+
+| Card number | 3DS result |
+| --- | --- |
+| `5200000000000015` | Challenge YES |
+| `5200000000000049` | Challenge YES |
+| `5200000000000064` | Challenge NO |
+| `5200000000000072` | Challenge NO |
+
+Challenge YES cards complete only after the challenge is accepted. A decline must produce a failed payment with no `paid` event or confirmation email. Point the AFS webhook at an HTTPS tunnel to `/payments/webhook/afs`; the simulator only delivers notifications to reachable URLs.
 
 ## Verification, replay and notifications
 
-`PaymentManager::processWebhook` verifies the provider notification before reading or writing settlement data, then locks the payment inside a database transaction. It checks the provider session, currency, original amount and cumulative received amount. `payment_events` has a unique provider/event constraint and a fingerprint of normalized verified data. Exact replay is a no-op; changed data reusing an event ID is rejected. Stale callbacks cannot downgrade settled funds or reopen a refunded payment. The payment, linked application status, event and audit updates commit together.
+`PaymentManager::processWebhook` verifies the provider notification before reading or writing settlement data, then locks the payment inside a database transaction. It checks the provider session, currency, original amount and cumulative received amount. `payment_events` has a unique provider/event constraint and a fingerprint of normalized verified data. Exact replay is a no-op; changed data reusing an event ID is rejected. Stale callbacks cannot downgrade settled funds or reopen a refunded payment. Payment, linked application status, event and audit updates commit together.
 
-Email confirmation is queued after commit only when a full payment is verified or a full offline receipt is explicitly recorded. The receipt values are snapshotted so a later refund does not alter an already queued acknowledgement. Offline emails describe an administrative offline receipt. Pending requests do not send payment-success notifications. Monitor failed jobs and provider webhook retries during operations.
+Email confirmation is queued after commit only when a full payment is verified or a full offline receipt is recorded. Application confirmations include the application reference; standalone confirmations include the customer name, BHD amount, transaction reference, payment channel and description, with no application reference. Pending requests do not send payment-success notifications.
 
-Run the module tests with `php artisan test --compact tests/Feature/PaymentsTest.php`. The signed provider used by those tests exists only in the test file and is never registered in production configuration.
+## Offline receipts and refunds
+
+Only super administrators may record funds received offline or record a completed full offline refund. These are labeled as administrative offline records, audited and never transfer money. The offline refund action rejects online gateway transactions. Record verification details and the bank/cash receipt reference; never put credentials, card details or security codes in notes.
+
+## Payment history and reconciliation
+
+Application payment status summarizes linked payment records; it is not an invoice or general-ledger balance. Staff can filter payments by type (application — including an entered reference that matches an application, standalone, legacy/unlinked), status, channel, date range and customer/reference search. Queries eager-load application, entered-reference and request relationships and paginate results. Outstanding requests without a payment are listed separately above the transactions table.
+
+## Queue and mail
+
+Payment-request and confirmation notifications implement `ShouldQueue` and are dispatched after commit. Production must run a durable queue worker, for example:
+
+```bash
+php artisan queue:work --tries=3 --timeout=120
+```
+
+Configure a real mail transport in production and monitor failed jobs. `MAIL_MAILER=log` and `MAIL_MAILER=array` do not deliver email: requests are still stored and marked sent, but customers receive nothing. The payments workspace shows a warning whenever the active mailer is not a delivering transport. For SMTP, set `MAIL_MAILER=smtp`, a host/port, credentials and a verified `MAIL_FROM_ADDRESS`; keep `APP_URL` set to the public HTTPS URL so emailed signed links point to the live site. After changing mail settings, clear the config cache and resend the affected request. Local development may use `log`/`array`, but delivery must be verified with a real SMTP/provider account before announcing payment links.
+
+## Tests and deployment checklist
+
+Relevant feature tests:
+
+```bash
+php artisan test --compact tests/Feature/PaymentRequestTest.php
+php artisan test --compact tests/Feature/PaymentsTest.php
+php artisan test --compact tests/Feature/AfsPaymentTest.php
+php artisan test --compact tests/Feature/StandalonePaymentRequestTest.php
+php artisan test --compact tests/Feature/ApplicationsTest.php
+```
+
+Before deployment:
+
+1. Review and back up the database.
+2. Run `php artisan migrate` (the new migration extends `payment_requests`; it does not edit the original migration).
+3. Run the payment and application feature tests.
+4. Run `php artisan route:list --path=pay` and confirm no route conflicts.
+5. Run `php artisan config:clear`/`config:cache` as appropriate for the environment.
+6. Ensure a queue worker is running and mail delivery is verified.
+7. Confirm the server's PHP has a valid CA bundle (`curl.cainfo`/`openssl.cafile` or the OS trust store). Without it, every AFS HTTPS call fails with `cURL error 60` and customers are sent back without a checkout session.
+8. Perform an approved low-value live AFS transaction and refund before announcing availability.
+9. Do not run destructive database commands or delete existing payment/application records.
+
+## Legacy provider adapter guidance
+
+The generic provider integration guidance remains valid for future adapters: implement `PaymentGatewayInterface`, use the provider’s official verification process, keep credentials in environment variables, register the adapter and approved HTTPS checkout hosts, and test sandbox success, decline, cancellation, partial settlement, refund, malformed callbacks, wrong merchant/session/amount/currency, duplicate delivery and out-of-order delivery.
+
+The public generic payment creation form is intentionally disabled. New payment creation must go through the application or standalone admin workflows.

@@ -5,9 +5,11 @@ namespace App\Services\Payments;
 use App\Models\Application;
 use App\Models\Payment;
 use App\Models\PaymentEvent;
+use App\Models\PaymentRequest;
 use App\Notifications\PaymentConfirmed;
 use App\Services\Audit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
@@ -31,6 +33,7 @@ class PaymentManager
     {
         return DB::transaction(function () use ($data) {
             $payment = Payment::create([
+                'application_id' => $data['application_id'] ?? null,
                 'customer_name' => $data['customer_name'],
                 'phone' => $data['phone'],
                 'email' => $data['email'] ?? null,
@@ -59,29 +62,106 @@ class PaymentManager
             return null;
         }
 
+        return DB::transaction(function () use ($payment, $gateway): ?GatewayCheckout {
+            $locked = Payment::query()->whereKey($payment->id)->lockForUpdate()->firstOrFail();
+            $payment->setRawAttributes($locked->getAttributes(), true);
+
+            if ($payment->status !== 'pending' || $payment->channel !== 'gateway') {
+                return null;
+            }
+
+            if ($resumed = $this->resumeExistingCheckout($payment, $gateway)) {
+                return $resumed;
+            }
+
+            try {
+                $checkout = $gateway->initiate($payment, $this->returnUrl($payment));
+            } catch (Throwable $exception) {
+                // Do not leak provider request bodies, credentials or card data into logs.
+                Log::warning('Payment checkout could not be started.', [
+                    'payment_id' => $payment->id,
+                    'gateway' => $gateway->name(),
+                    'exception' => $exception::class,
+                    'message' => mb_substr(str_replace(["\r", "\n"], ' ', $exception->getMessage()), 0, 300),
+                ]);
+
+                return null;
+            }
+
+            if (! in_array(parse_url($checkout->url, PHP_URL_HOST), config('payments.checkout_hosts', []), true)) {
+                Log::warning('Payment gateway returned a checkout host that is not approved.', ['payment_id' => $payment->id]);
+
+                return null;
+            }
+
+            $this->rememberCheckoutSession($payment, $checkout->reference);
+
+            return $checkout;
+        }, 3);
+    }
+
+    /**
+     * Reuse a provider checkout that was created recently instead of replacing its
+     * gateway reference. This keeps repeated Pay clicks and browser retries on the
+     * same session while still allowing an expired session to be reinitialised.
+     */
+    private function resumeExistingCheckout(Payment $payment, PaymentGatewayInterface $gateway): ?GatewayCheckout
+    {
+        if (! $gateway instanceof RendersCheckoutWidget
+            || ! $payment->gateway_reference
+            || ! hash_equals($gateway->name(), (string) $payment->gateway)) {
+            return null;
+        }
+
+        $startedAt = data_get($payment->gateway_response, 'checkout_started_at');
+        $started = is_string($startedAt) && $startedAt !== ''
+            ? rescue(fn () => Carbon::parse($startedAt), null, false)
+            : null;
+        $started ??= $payment->updated_at;
+
+        $reuseMinutes = max(1, (int) config('payments.checkout_reuse_minutes', 25));
+
+        if (! $started instanceof Carbon || $started->lt(now()->subMinutes($reuseMinutes))) {
+            return null;
+        }
+
         try {
-            $checkout = $gateway->initiate($payment, $this->receiptUrl($payment));
+            return $gateway->resumeCheckout($payment);
         } catch (Throwable) {
-            // Do not leak provider request bodies, credentials or card data into logs.
-            Log::warning('Payment checkout could not be started.', ['payment_id' => $payment->id, 'gateway' => $gateway->name()]);
-
             return null;
         }
+    }
 
-        if (! in_array(parse_url($checkout->url, PHP_URL_HOST), config('payments.checkout_hosts', []), true)) {
-            Log::warning('Payment gateway returned a checkout host that is not approved.', ['payment_id' => $payment->id]);
+    /**
+     * Record checkout metadata so a repeated POST can resume the same provider session.
+     * Older references are kept for settlement in case a customer completes the previous
+     * widget session while a new one is being created.
+     */
+    private function rememberCheckoutSession(Payment $payment, string $reference): void
+    {
+        $response = (array) ($payment->gateway_response ?? []);
+        $previous = array_values(array_unique(array_filter(
+            array_merge((array) ($response['previous_checkout_references'] ?? []), [$payment->gateway_reference]),
+            fn (mixed $value): bool => is_string($value) && $value !== '',
+        )));
 
-            return null;
-        }
+        $response['checkout_started_at'] = now()->toIso8601String();
+        $response['previous_checkout_references'] = $previous;
 
-        $payment->update(['gateway_reference' => $checkout->reference]);
-
-        return $checkout;
+        $payment->update([
+            'gateway_reference' => $reference,
+            'gateway_response' => $response,
+        ]);
     }
 
     public function receiptUrl(Payment $payment): string
     {
         return URL::temporarySignedRoute('pay.receipt', now()->addDay(), ['payment' => $payment->id]);
+    }
+
+    public function returnUrl(Payment $payment): string
+    {
+        return route('pay.return', ['reference' => $payment->transaction_reference]);
     }
 
     public function processWebhook(string $gatewayName, Request $request): bool
@@ -94,10 +174,53 @@ class PaymentManager
         // before looking up a payment, taking a lock or writing any event.
         $event = $gateway->verifyWebhook($request);
 
+        return $this->settle($gateway, $event);
+    }
+
+    /**
+     * Reconcile the shopper's browser return by querying the provider. The browser
+     * parameters are lookup hints only; the gateway decides whether a verified event exists.
+     */
+    public function reconcileCheckout(Payment $payment, Request $request): bool
+    {
+        $gateway = $this->gateway();
+
+        if (! $gateway->available() || ! $gateway instanceof VerifiesCheckoutReturn) {
+            return false;
+        }
+
+        if ($payment->channel !== 'gateway'
+            || ! hash_equals($gateway->name(), (string) $payment->gateway)
+            || $payment->status !== 'pending'
+            || ! $payment->gateway_reference) {
+            return false;
+        }
+
+        try {
+            $event = $gateway->verifyCheckoutReturn($payment, $request);
+        } catch (Throwable) {
+            Log::warning('Payment return could not be verified.', ['payment_id' => $payment->id, 'gateway' => $gateway->name()]);
+
+            return false;
+        }
+
+        return $event !== null && $this->settle($gateway, $event);
+    }
+
+    private function settle(PaymentGatewayInterface $gateway, VerifiedPaymentEvent $event): bool
+    {
         return DB::transaction(function () use ($gateway, $event) {
             $payment = Payment::where('transaction_reference', $event->transactionReference)->lockForUpdate()->firstOrFail();
             abort_unless($payment->channel === 'gateway' && hash_equals($payment->gateway, $gateway->name()), 409, 'Payment provider does not match.');
-            abort_unless($payment->gateway_reference && hash_equals($payment->gateway_reference, $event->gatewayReference), 409, 'Payment session does not match.');
+
+            $knownReferences = array_merge(
+                [(string) $payment->gateway_reference],
+                (array) data_get($payment->gateway_response, 'previous_checkout_references', []),
+            );
+            $sessionMatches = collect($knownReferences)->contains(
+                fn (mixed $reference): bool => is_string($reference) && $reference !== '' && hash_equals($reference, $event->gatewayReference),
+            );
+            abort_unless($payment->gateway_reference && $sessionMatches, 409, 'Payment session does not match.');
 
             $previous = PaymentEvent::where('gateway', $gateway->name())->where('event_id', $event->eventId)->first();
             if ($previous) {
@@ -106,9 +229,9 @@ class PaymentManager
                 return false;
             }
 
-            $expected = BhdAmount::minorUnits($payment->amount);
-            $received = BhdAmount::minorUnits($event->amountReceived);
-            abort_unless($event->currency === 'BHD' && $payment->currency === $event->currency && BhdAmount::minorUnits($event->amount) === $expected, 422, 'Payment amount or currency does not match.');
+            $expected = BhdAmount::minorUnits(BhdAmount::gatewayAmount((string) $payment->amount));
+            $received = BhdAmount::minorUnits(BhdAmount::gatewayAmount($event->amountReceived));
+            abort_unless($event->currency === 'BHD' && $payment->currency === $event->currency && BhdAmount::minorUnits(BhdAmount::gatewayAmount($event->amount)) === $expected, 422, 'Payment amount or currency does not match.');
             abort_unless(match ($event->status) {
                 'paid' => $received === $expected,
                 'partially_paid' => $received > 0 && $received < $expected,
@@ -137,14 +260,24 @@ class PaymentManager
                 return false;
             }
 
+            $providerReference = is_array($payment->gateway_response)
+                ? ($payment->gateway_response['provider_reference'] ?? null)
+                : null;
+
             $payment->update([
                 'status' => $event->status,
                 'amount_received' => BhdAmount::normalize($event->amountReceived),
                 'paid_at' => $event->status === 'paid' ? now() : $payment->paid_at,
                 'refunded_at' => $event->status === 'refunded' ? now() : null,
-                'gateway_response' => ['event_id' => $event->eventId, 'verified_at' => now()->toIso8601String(), 'status' => $event->status],
+                'gateway_response' => array_filter([
+                    'event_id' => $event->eventId,
+                    'provider_reference' => $providerReference ?? $event->providerReference,
+                    'verified_at' => now()->toIso8601String(),
+                    'status' => $event->status,
+                ], fn (mixed $value): bool => $value !== null),
             ]);
             $this->syncApplication($payment->application_id);
+            $this->markPaymentRequestPaid($payment, $event->status);
             Audit::record('payment.gateway_verified', $payment, $before, $payment->only(['status', 'amount_received', 'paid_at']));
 
             if ($event->status === 'paid') {
@@ -186,20 +319,6 @@ class PaymentManager
             }
 
             return $payment;
-        });
-    }
-
-    public function link(Payment $payment, string $reference): void
-    {
-        Gate::authorize('manage-payments');
-        DB::transaction(function () use ($payment, $reference) {
-            $payment = Payment::whereKey($payment->id)->lockForUpdate()->firstOrFail();
-            $application = Application::where('reference_number', $reference)->firstOrFail();
-            $oldApplication = $payment->application_id;
-            $payment->update(['application_id' => $application->id]);
-            $this->syncApplication($oldApplication);
-            $this->syncApplication($application->id);
-            Audit::record('payment.application_linked', $payment, ['application_id' => $oldApplication], ['application_id' => $application->id]);
         });
     }
 
@@ -248,5 +367,22 @@ class PaymentManager
         if ($payment->email) {
             Notification::route('mail', $payment->email)->notify((new PaymentConfirmed($payment))->afterCommit());
         }
+    }
+
+    private function markPaymentRequestPaid(Payment $payment, string $eventStatus): void
+    {
+        if ($eventStatus !== 'paid') {
+            return;
+        }
+
+        $paymentRequest = PaymentRequest::where('payment_id', $payment->id)->lockForUpdate()->first();
+
+        if (! $paymentRequest || $paymentRequest->status === 'paid') {
+            return;
+        }
+
+        $before = $paymentRequest->only(['status', 'paid_at']);
+        $paymentRequest->update(['status' => 'paid', 'paid_at' => now()]);
+        Audit::record('payment_request.paid', $paymentRequest, $before, $paymentRequest->only(['status', 'paid_at']));
     }
 }

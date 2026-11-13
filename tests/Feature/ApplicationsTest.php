@@ -157,6 +157,83 @@ class ApplicationsTest extends TestCase
         $this->assertDatabaseHas('activity_logs', ['action' => 'application.updated', 'subject_id' => $application->id]);
     }
 
+    public function test_success_page_explains_that_payment_links_are_issued_by_the_team(): void
+    {
+        $this->post(route('apply.store'), $this->payload())->assertSessionHasNoErrors();
+        $application = Application::query()->sole();
+
+        $this->get(route('apply.success'))
+            ->assertOk()
+            ->assertSee($application->reference_number)
+            ->assertSee('secure payment link')
+            ->assertDontSee('Pay an agreed service fee')
+            ->assertDontSee('reference='.urlencode($application->reference_number), false);
+    }
+
+    public function test_admin_approval_does_not_email_a_payment_link_without_a_finalized_fee(): void
+    {
+        $application = Application::factory()->create([
+            'status' => 'new',
+            'email' => 'asha@example.test',
+            'service_type' => 'study_abroad',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin', 'is_active' => true]);
+
+        $this->actingAs($admin)
+            ->patch(route('admin.applications.update', $application), ['status' => 'approved'])
+            ->assertSessionHasNoErrors()
+            ->assertRedirect()
+            ->assertSessionHas('success', 'Application updated.');
+
+        $application->refresh();
+
+        $this->assertSame('approved', $application->status);
+        $this->assertDatabaseHas('application_status_histories', [
+            'application_id' => $application->id,
+            'user_id' => $admin->id,
+            'from_status' => 'new',
+            'to_status' => 'approved',
+        ]);
+        Notification::assertNothingSent();
+        $this->assertDatabaseCount('payment_requests', 0);
+    }
+
+    public function test_admin_can_edit_applicant_and_service_details_without_changing_the_reference(): void
+    {
+        $application = Application::factory()->create([
+            'service_type' => 'study_abroad',
+            'reference_number' => 'EW-2026-00042',
+            'email' => 'old@example.test',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin', 'is_active' => true]);
+
+        $this->actingAs($admin)
+            ->patch(route('admin.applications.update', $application), [
+                'status' => 'new',
+                'full_name' => 'Updated Applicant',
+                'email' => 'updated@example.test',
+                'phone' => '+973 39000000',
+                'nationality' => 'Bahraini',
+                'current_country' => 'Bahrain',
+                'current_city' => 'Manama',
+                'details' => ['preferred_course' => 'Data Science', 'preferred_study_level' => 'Master’s degree'],
+            ])
+            ->assertSessionHasNoErrors()
+            ->assertRedirect();
+
+        $application->refresh();
+        $this->assertSame('EW-2026-00042', $application->reference_number);
+        $this->assertSame('Updated Applicant', $application->full_name);
+        $this->assertSame('updated@example.test', $application->email);
+        $this->assertSame('+973 39000000', $application->phone);
+        $this->assertDatabaseHas('study_abroad_details', [
+            'application_id' => $application->id,
+            'preferred_course' => 'Data Science',
+            'preferred_study_level' => 'Master’s degree',
+        ]);
+        $this->assertDatabaseHas('activity_logs', ['action' => 'application.updated', 'subject_id' => $application->id]);
+    }
+
     public function test_admin_filters_isolate_matching_applications(): void
     {
         Application::factory()->create(['full_name' => 'Matching Applicant', 'current_country' => 'Bahrain', 'nationality' => 'Indian', 'payment_status' => 'paid']);

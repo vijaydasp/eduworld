@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Payment extends Model
 {
@@ -61,6 +62,16 @@ class Payment extends Model
         return $this->belongsTo(Application::class);
     }
 
+    /**
+     * Match the application reference the customer typed into the old public form.
+     * This is a display/reconciliation hint only; it never binds the payment for
+     * authorization or settlement because customer input is not verified linking.
+     */
+    public function enteredApplication(): BelongsTo
+    {
+        return $this->belongsTo(Application::class, 'entered_reference', 'reference_number');
+    }
+
     public function recordedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'recorded_by');
@@ -69,5 +80,10 @@ class Payment extends Model
     public function events(): HasMany
     {
         return $this->hasMany(PaymentEvent::class);
+    }
+
+    public function paymentRequest(): HasOne
+    {
+        return $this->hasOne(PaymentRequest::class);
     }
 }

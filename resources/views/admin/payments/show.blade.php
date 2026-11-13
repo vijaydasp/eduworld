@@ -1,9 +1,13 @@
 @extends('layouts.admin')
 @section('title', $payment->transaction_reference)
 @section('content')
+@php($request = $payment->paymentRequest)
+@php($linkedApplication = $payment->application ?? $request?->application ?? $payment->enteredApplication)
+@php($paymentType = $payment->application ? 'Application-linked payment' : ($linkedApplication ? 'Application-linked payment (entered reference)' : ($request?->isStandalone() ? 'Standalone request payment' : 'Legacy / unlinked payment')))
 <p><a href="{{ route('admin.payments.index') }}">← All payments</a></p><h1>{{ $payment->transaction_reference }}</h1>
 <div class="grid grid-2"><section class="panel"><h2>Transaction details</h2><dl>
     <dt>Customer</dt><dd>{{ $payment->customer_name }}</dd><dt>Contact</dt><dd>{{ $payment->phone }}<br>{{ $payment->email ?: 'No email supplied' }}</dd>
+    <dt>Payment type</dt><dd>{{ $paymentType }}</dd>
     <dt>Service</dt><dd>{{ $payment->serviceLabel() }}</dd>
     <dt>Expected amount</dt><dd>BHD {{ $payment->amount }}</dd><dt>Received amount</dt><dd>BHD {{ $payment->amount_received }}</dd>
     <dt>Status</dt><dd><span class="badge">{{ str($payment->status)->replace('_', ' ')->title() }}</span></dd>
@@ -15,13 +19,30 @@
     @if ($payment->refunded_at)<dt>Refund recorded at</dt><dd>{{ $payment->refunded_at->format('d M Y H:i') }}</dd>@endif
     <dt>Remarks</dt><dd>{{ $payment->remarks ?: 'None' }}</dd>
 </dl></section>
-<section class="panel"><h2>Application link</h2>
-    @if ($payment->application)<p>Linked to <a href="{{ route('admin.applications.show', $payment->application) }}">{{ $payment->application->reference_number }}</a>.</p>@else<p>This payment has not been linked to an application.</p>@endif
-    <p>Check the payer and service details before linking. The customer-supplied reference is not verified automatically.</p>
-    <form method="POST" action="{{ route('admin.payments.link', $payment) }}">@csrf @method('PATCH')
-        <div class="field"><label for="application_reference">Application reference</label><input id="application_reference" name="application_reference" value="{{ old('application_reference', $payment->application?->reference_number) }}" placeholder="EW-2026-00001" required></div>
-        <button class="button" type="submit">Link application</button>
-    </form>
+<section class="panel"><h2>Application / payment request</h2>
+    @if ($payment->application)
+        <p>Linked to application <a href="{{ route('admin.applications.show', $payment->application) }}">{{ $payment->application->reference_number }}</a>.</p>
+    @elseif ($linkedApplication)
+        <p>Linked to application <a href="{{ route('admin.applications.show', $linkedApplication) }}">{{ $linkedApplication->reference_number }}</a> <small>(matched from the reference the customer entered — customer-supplied, not a verified binding)</small>.</p>
+    @else
+        <p>No application is linked to this payment.</p>
+    @endif
+    @if ($request)
+        <h3>{{ $request->typeLabel() }}</h3>
+        <dl class="detail-list">
+            <dt>Request ID</dt><dd><small>{{ $request->public_id }}</small></dd>
+            <dt>Description</dt><dd>{{ $request->description }}</dd>
+            <dt>Request amount</dt><dd>BHD {{ number_format((float) $request->amount, 3) }}</dd>
+            <dt>Request status</dt><dd><span class="badge">{{ $request->statusLabel() }}</span></dd>
+            <dt>Expires</dt><dd>{{ $request->expires_at->format('d M Y, H:i') }}</dd>
+            @if ($request->isStandalone())
+                <dt>Customer</dt><dd>{{ $request->customer_name }}<br>{{ $request->customer_email }}@if ($request->customer_phone)<br>{{ $request->customer_phone }}@endif</dd>
+                <dt>Request page</dt><dd><a href="{{ route('admin.payments.requests.show', $request) }}">View standalone request</a></dd>
+            @endif
+        </dl>
+    @elseif (! $linkedApplication)
+        <p>This legacy or unlinked payment has no associated payment request. Existing transaction history is preserved.</p>
+    @endif
     @if ($payment->channel === 'gateway')<p>Online settlement status is updated only through verified provider notifications.</p>@endif
     @can('manage-settings')
         @if ($payment->channel === 'offline' && in_array($payment->status, ['paid', 'partially_paid'], true))

@@ -33,6 +33,16 @@ class Application extends Model
         return $this->hasMany(Payment::class);
     }
 
+    public function paymentRequests(): HasMany
+    {
+        return $this->hasMany(PaymentRequest::class)->latest('id');
+    }
+
+    public function latestPaymentRequest(): HasOne
+    {
+        return $this->hasOne(PaymentRequest::class)->latestOfMany();
+    }
+
     public function studyDetails(): HasOne
     {
         return $this->hasOne(StudyAbroadDetail::class);
