@@ -7,7 +7,7 @@ use App\Http\Controllers\Public\PaymentRequestController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/pay', [PaymentController::class, 'create'])->name('pay');
-Route::post('/pay', [PaymentController::class, 'store'])->middleware('throttle:payments')->name('pay.store');
+Route::post('/pay', [PaymentController::class, 'store'])->middleware(['throttle:payments', 'captcha'])->name('pay.store');
 Route::get('/pay/request/{paymentRequest:public_id}', [PaymentRequestController::class, 'show'])->middleware(['signed', 'throttle:20,1'])->name('pay.request.show');
 Route::post('/pay/request/{paymentRequest:public_id}', [PaymentRequestController::class, 'pay'])->middleware(['signed', 'throttle:20,1'])->name('pay.request.pay');
 Route::get('/pay/request/{paymentRequest:public_id}/checkout', [PaymentRequestController::class, 'checkout'])->middleware(['signed', 'throttle:20,1'])->name('pay.request.checkout');

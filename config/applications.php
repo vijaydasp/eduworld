@@ -55,6 +55,19 @@ return [
             ],
             'uploads' => ['passport' => 'Passport', 'residence_permit' => 'Residence permit', 'additional_documents' => 'Additional documents'],
         ],
+        'visit_visa' => [
+            'label' => 'Visit Visa', 'relation' => 'visaDetails',
+            'fields' => [
+                'destination_country' => $text('Destination country', true),
+                'visa_type' => $select('Visit visa type', ['Tourist / Visit', 'Family Visit', 'Business Visit', 'Other']) + ['required' => true],
+                'purpose_of_travel' => $area('Purpose of visit'),
+                'proposed_travel_date' => ['label' => 'Proposed travel date', 'type' => 'date'],
+                'duration' => $text('Expected duration of stay'),
+                'current_residency' => $text('Current residency'),
+                'previous_visa_history' => $area('Previous visa history'),
+            ],
+            'uploads' => ['passport' => 'Passport', 'residence_permit' => 'Residence permit', 'additional_documents' => 'Additional documents'],
+        ],
         'supporting_documents' => [
             'label' => 'Supporting Documents', 'relation' => 'supportingDocumentDetails',
             'fields' => [
@@ -65,6 +78,18 @@ return [
                 'number_of_travelers' => $number('Number of travelers', 1, 500),
                 'remarks' => $area('Remarks'),
             ], 'uploads' => [],
+        ],
+        'visa_documents' => [
+            'label' => 'Visa Documents', 'relation' => 'supportingDocumentDetails',
+            'fields' => [
+                'services_requested' => ['label' => 'Visa document assistance required', 'type' => 'checkboxes', 'required' => true, 'options' => ['Visa application form', 'Passport and photograph checklist', 'Invitation / sponsorship documents', 'Proof of accommodation', 'Travel itinerary', 'Financial documents checklist', 'Employment / enrollment documents', 'Other']],
+                'destination' => $text('Destination country', true),
+                'travel_start_date' => ['label' => 'Proposed travel start date', 'type' => 'date'],
+                'travel_end_date' => ['label' => 'Proposed travel end date', 'type' => 'date'],
+                'number_of_travelers' => $number('Number of travelers', 1, 500),
+                'remarks' => $area('Additional details'),
+            ],
+            'uploads' => ['passport' => 'Passport copy', 'financial_documents' => 'Financial documents', 'additional_documents' => 'Additional visa documents'],
         ],
         'attestation' => [
             'label' => 'Attestation Services', 'relation' => 'attestationDetails',

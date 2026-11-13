@@ -26,58 +26,68 @@ class PaymentsTest extends TestCase
         parent::setUp();
         Notification::fake();
         $this->withoutVite();
-        config(['payments.driver' => 'disabled']);
+        config([
+            'payments.driver' => 'disabled',
+            'eduworld.turnstile_site_key' => null,
+            'eduworld.turnstile_secret_key' => null,
+        ]);
     }
 
-    public function test_public_payment_creation_is_disabled_and_creates_no_records(): void
+    public function test_pay_now_shows_the_payment_form_and_disabled_gateway_state(): void
     {
-        $application = $this->application();
-
-        $this->get(route('pay'))->assertRedirect(route('contact'));
-
-        $this->post(route('pay.store'), $this->paymentData() + [
-            'entered_reference' => $application->reference_number,
-            'application_id' => $application->id, 'status' => 'paid', 'amount_received' => '12.345',
-        ])->assertRedirect(route('contact'));
-
-        $this->assertDatabaseCount('payments', 0);
-        $this->assertSame('pending', $application->fresh()->payment_status);
-        Notification::assertNothingSent();
+        $this->get(route('pay'))
+            ->assertOk()
+            ->assertSee('Make a secure payment')
+            ->assertSee('Amount (BHD)')
+            ->assertSee('Visit Visa')
+            ->assertSee('Visa Documents')
+            ->assertSee('Online payment unavailable');
     }
 
     public function test_payment_pages_render_and_admin_filters_handle_end_date_without_start_date(): void
     {
         $payment = Payment::factory()->create();
-        $this->get(route('pay'))->assertRedirect(route('contact'));
+        $this->get(route('pay'))->assertOk()->assertSee('Make a secure payment');
         $this->actingAs(User::factory()->create(['role' => 'super_admin', 'is_active' => true]));
         $this->get(route('admin.payments.index', ['to' => now()->toDateString()]))->assertOk()->assertSee($payment->transaction_reference);
         $this->get(route('admin.payments.show', $payment))->assertOk();
         $this->get(route('admin.payments.offline.create'))->assertOk();
     }
 
-    public function test_public_payment_form_is_no_longer_offered(): void
+    public function test_payment_submission_does_not_create_a_payment_when_gateway_is_unavailable(): void
     {
-        $this->get(route('pay'))->assertRedirect(route('contact'));
-
         $this->post(route('pay.store'), array_replace($this->paymentData(), ['service' => 'registration_fee']))
-            ->assertRedirect(route('contact'));
+            ->assertRedirect(route('pay'))
+            ->assertSessionHasErrors('payment');
         $this->assertDatabaseCount('payments', 0);
     }
 
-    public function test_public_route_cannot_reach_an_enabled_gateway_adapter(): void
+    public function test_public_payment_creates_a_pending_gateway_payment_and_ignores_client_settlement_fields(): void
     {
         $this->enableTestGateway();
         config(['payments.checkout_hosts' => ['checkout.example.test']]);
-        $this->post(route('pay.store'), $this->paymentData())->assertRedirect(route('contact'));
-        $this->assertDatabaseCount('payments', 0);
+        $this->post(route('pay.store'), $this->paymentData() + [
+            'application_id' => 999,
+            'status' => 'paid',
+            'amount_received' => '12.345',
+        ])->assertRedirect('https://checkout.example.test/session');
+
+        $this->assertDatabaseCount('payments', 1);
+        $payment = Payment::query()->firstOrFail();
+        $this->assertNull($payment->application_id);
+        $this->assertSame('pending', $payment->status);
+        $this->assertSame('0.000', $payment->amount_received);
+        $this->assertSame('12.345', $payment->amount);
         Notification::assertNothingSent();
     }
 
-    public function test_public_payment_route_creates_nothing_for_every_amount(): void
+    public function test_public_payment_rejects_invalid_amounts_without_creating_records(): void
     {
-        foreach (['1.2345', '-1', '0', '1e3', '12.345'] as $amount) {
+        $this->enableTestGateway();
+
+        foreach (['1.2345', '-1', '0', '1e3', '100000.001'] as $amount) {
             $this->post(route('pay.store'), array_replace($this->paymentData(), ['amount' => $amount]))
-                ->assertRedirect(route('contact'));
+                ->assertSessionHasErrors('amount');
         }
         $this->assertDatabaseCount('payments', 0);
     }

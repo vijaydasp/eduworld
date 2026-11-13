@@ -41,7 +41,81 @@ class AfsPaymentTest extends TestCase
                 'descriptor' => 'Edu World',
                 'test_mode' => 'INTERNAL',
             ],
+            'eduworld.turnstile_site_key' => null,
+            'eduworld.turnstile_secret_key' => null,
         ]);
+    }
+
+    public function test_pay_now_creates_an_afs_checkout_for_the_entered_amount_and_shows_card_form(): void
+    {
+        Http::fake([
+            'https://eu-test.oppwa.com/v1/checkouts' => Http::response([
+                'id' => self::CHECKOUT_ID,
+                'result' => ['code' => '000.200.100', 'description' => 'successfully created checkout'],
+            ]),
+        ]);
+
+        $response = $this->post(route('pay.store'), [
+            'customer_name' => 'Test Applicant',
+            'phone' => '+97333640001',
+            'email' => 'payer@example.test',
+            'entered_reference' => 'EW-2026-00001',
+            'service' => 'study_abroad',
+            'amount' => '12.345',
+            'terms' => '1',
+            'application_id' => 999,
+            'status' => 'paid',
+            'amount_received' => '12.345',
+        ]);
+
+        $response->assertRedirect();
+        $payment = Payment::query()->firstOrFail();
+        $this->assertSame('afs', $payment->gateway);
+        $this->assertSame('pending', $payment->status);
+        $this->assertSame('0.000', $payment->amount_received);
+        $this->assertSame('12.345', $payment->amount);
+        $this->assertNull($payment->application_id);
+        $this->assertSame(self::CHECKOUT_ID, $payment->gateway_reference);
+
+        Http::assertSent(fn (Request $request): bool => $request->url() === 'https://eu-test.oppwa.com/v1/checkouts'
+            && $request->method() === 'POST'
+            && $request['amount'] === '12.35'
+            && $request['currency'] === 'BHD'
+            && $request['paymentType'] === 'DB');
+
+        $response->assertRedirectContains('/pay/checkout/'.$payment->id);
+        $checkoutUrl = $response->headers->get('Location');
+        $this->get($checkoutUrl)
+            ->assertOk()
+            ->assertSee('https://eu-test.oppwa.com/v1/paymentWidgets.js?checkoutId='.self::CHECKOUT_ID, false)
+            ->assertSee('data-brands="VISA MASTER"', false)
+            ->assertSee($payment->transaction_reference);
+    }
+
+    public function test_public_payment_remains_pending_when_afs_cannot_prepare_checkout(): void
+    {
+        Http::fake([
+            'https://eu-test.oppwa.com/v1/checkouts' => Http::response([
+                'result' => ['code' => '800.100.100', 'description' => 'checkout unavailable'],
+            ], 503),
+        ]);
+
+        $this->from(route('pay'))
+            ->post(route('pay.store'), [
+                'customer_name' => 'Test Applicant',
+                'phone' => '+97333640001',
+                'email' => 'payer@example.test',
+                'service' => 'study_abroad',
+                'amount' => '12.345',
+                'terms' => '1',
+            ])
+            ->assertRedirect(route('pay'))
+            ->assertSessionHasErrors('payment');
+
+        $payment = Payment::query()->firstOrFail();
+        $this->assertSame('pending', $payment->status);
+        $this->assertSame('0.000', $payment->amount_received);
+        $this->assertNull($payment->gateway_reference);
     }
 
     public function test_checkout_session_is_created_server_to_server_and_rendered_on_our_signed_page(): void

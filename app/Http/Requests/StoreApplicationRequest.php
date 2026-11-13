@@ -53,7 +53,7 @@ class StoreApplicationRequest extends FormRequest
                 $rules['details.'.$key.'.*'] = ['string', 'distinct', Rule::in($field['options'])];
             }
         }
-        if ($this->input('service_type') === 'supporting_documents' && $this->filled('details.travel_start_date')) {
+        if (in_array($this->input('service_type'), ['supporting_documents', 'visa_documents'], true) && $this->filled('details.travel_start_date')) {
             $rules['details.travel_end_date'][] = 'after_or_equal:details.travel_start_date';
         }
         foreach (array_keys($uploads) as $kind) {

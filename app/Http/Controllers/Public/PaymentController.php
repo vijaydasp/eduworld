@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StorePaymentRequest;
 use App\Models\Payment;
 use App\Services\Payments\DeferredPaymentWebhook;
 use App\Services\Payments\InvalidPaymentWebhook;
@@ -12,22 +13,52 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
 use Illuminate\View\View;
 
 class PaymentController extends Controller
 {
-    /**
-     * Public arbitrary payment creation is disabled. Signed payment-request links
-     * issued by staff are the only way to start a new payment.
-     */
-    public function create(): RedirectResponse
+    public function create(PaymentManager $payments): View
     {
-        return to_route('contact');
+        return view('payments.create', [
+            'gatewayAvailable' => $payments->gateway()->available(),
+        ]);
     }
 
-    public function store(): RedirectResponse
+    public function store(StorePaymentRequest $request, PaymentManager $payments): RedirectResponse
     {
-        return to_route('contact');
+        $gateway = $payments->gateway();
+
+        if (! $gateway->available()) {
+            return to_route('pay')->withInput()->withErrors([
+                'payment' => 'Online payment is currently unavailable. Please contact our team for assistance.',
+            ]);
+        }
+
+        $payment = $payments->createIntent($request->validated());
+        $checkout = $payments->checkout($payment);
+
+        if ($checkout === null) {
+            Log::warning('Public payment checkout could not be started.', [
+                'payment_id' => $payment->id,
+                'gateway' => $gateway->name(),
+            ]);
+
+            return to_route('pay')->withInput()->withErrors([
+                'payment' => 'We could not start the secure payment. Please try again or contact our team.',
+            ]);
+        }
+
+        if ($gateway instanceof RendersCheckoutWidget) {
+            return redirect()->to(URL::temporarySignedRoute(
+                'pay.checkout',
+                now()->addMinutes(35),
+                ['payment' => $payment->id],
+            ));
+        }
+
+        return redirect()->away($checkout->url);
     }
 
     public function checkout(Payment $payment, PaymentManager $payments): Response

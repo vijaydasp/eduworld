@@ -42,7 +42,9 @@ class ApplicationsTest extends TestCase
             'study' => ['study_abroad', ['preferred_course' => 'Medicine'], 'study_abroad_details'],
             'job' => ['job_assistance', ['job_category' => 'Healthcare & Nursing'], 'job_assistance_details'],
             'visa' => ['visa_services', ['destination_country' => 'France', 'visa_type' => 'Tourist / Visit'], 'visa_application_details'],
+            'visit_visa' => ['visit_visa', ['destination_country' => 'France', 'visa_type' => 'Family Visit'], 'visa_application_details'],
             'support' => ['supporting_documents', ['services_requested' => ['Flight Itinerary', 'Cover Letter']], 'supporting_document_details'],
+            'visa_documents' => ['visa_documents', ['services_requested' => ['Visa application form', 'Financial documents checklist'], 'destination' => 'France'], 'supporting_document_details'],
             'attestation' => ['attestation', ['document_type' => 'Degree certificate', 'issuing_country' => 'India', 'destination_country' => 'Bahrain'], 'attestation_details'],
             'employer' => ['employer_request', ['company_name' => 'Example Employer', 'company_country' => 'Bahrain', 'roles_required' => 'Warehouse workers'], 'employer_requests'],
             'other' => ['other', ['remarks' => 'Please advise on my travel documents.'], null],
@@ -74,6 +76,20 @@ class ApplicationsTest extends TestCase
         unset($data['consent_processing']);
         $this->post(route('apply.store'), $data)->assertSessionHasErrors(['details', 'details.destination_country', 'details.visa_type', 'consent_processing']);
         $this->assertDatabaseCount('applications', 0);
+    }
+
+    public function test_new_visa_services_are_available_on_the_home_services_and_application_pages(): void
+    {
+        $this->get(route('home'))->assertOk()->assertSee('Visit Visa')->assertSee('Visa Documents');
+        $this->get(route('services'))->assertOk()
+            ->assertSee('id="visit_visa"', false)
+            ->assertSee('id="visa_documents"', false);
+        $this->get(route('apply', ['service' => 'visit_visa']))->assertOk()
+            ->assertSee('Visit Visa')
+            ->assertSee('Visit visa type');
+        $this->get(route('apply', ['service' => 'visa_documents']))->assertOk()
+            ->assertSee('Visa Documents')
+            ->assertSee('Visa document assistance required');
     }
 
     public function test_service_arrays_are_rejected_without_a_server_error(): void

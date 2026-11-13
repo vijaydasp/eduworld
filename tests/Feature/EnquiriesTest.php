@@ -34,6 +34,17 @@ class EnquiriesTest extends TestCase
         Notification::assertSentOnDemand(NewEnquiry::class);
     }
 
+    public function test_contact_form_accepts_the_new_visa_services(): void
+    {
+        foreach (['visit_visa', 'visa_documents'] as $service) {
+            $this->post(route('contact.store'), array_replace($this->payload(), ['service_type' => $service]))
+                ->assertRedirect(route('contact'))
+                ->assertSessionHas('success');
+        }
+
+        $this->assertDatabaseCount('enquiries', 2);
+    }
+
     public function test_honeypot_and_invalid_contact_payload_are_rejected(): void
     {
         $this->post(route('contact.store'), $this->payload() + ['website' => 'spam'])->assertSessionHasErrors('website');

@@ -21,7 +21,12 @@
             <div hidden aria-hidden="true"><label for="website">Website</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
             <div class="field"><label><input type="checkbox" name="terms" value="1" @checked(old('terms')) required> I agree to the <a href="{{ url('/payment-terms') }}">payment terms</a> and <a href="{{ url('/refund-policy') }}">refund policy</a>.</label></div>
             <x-captcha />
-            <button class="button" type="submit">{{ $gatewayAvailable ? 'Proceed to secure payment' : 'Send payment request' }}</button>
+            @if ($gatewayAvailable)
+                <button class="button" type="submit">Continue to secure card payment →</button>
+            @else
+                <button class="button" type="submit" disabled>Online payment unavailable</button>
+                <p class="field-error" role="status">Online checkout is not available right now. Please contact our team to arrange payment.</p>
+            @endif
         </form>
         <aside class="panel">
             <span class="badge">BHD · Bahraini dinar</span>

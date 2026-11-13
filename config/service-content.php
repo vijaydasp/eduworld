@@ -28,6 +28,15 @@ return [
         'notice' => 'Visa approval or refusal is solely determined by the relevant embassy, consulate, immigration authority or authorized processing body. No approval can be guaranteed.',
         'cta' => 'Request visa assistance',
     ],
+    'visit_visa' => [
+        'label' => 'Visit Visa', 'icon' => 'globe', 'eyebrow' => 'Plan your visit', 'title' => 'Prepare for your visit with confidence.',
+        'summary' => 'Get guidance for tourist, family and business visit visa applications and their requirements.',
+        'intro' => 'Visit visa assistance in Bahrain and the GCC. Requirements vary by destination, nationality and travel purpose. Our team can help you understand the process and organize your application.',
+        'items' => ['Tourist visits' => 'Understand the application steps for eligible holidays and short stays.', 'Family visits' => 'Prepare information and documents for eligible visits to family members.', 'Business visits' => 'Organize application details for eligible business travel.', 'Application preparation' => 'Review forms, appointment steps and supporting document requirements.'],
+        'extra' => 'Share your destination, nationality, country of residence and intended travel dates so our team can guide you.',
+        'notice' => 'Visa eligibility and decisions are determined by the relevant authorities. We do not guarantee approval.',
+        'cta' => 'Apply for visit visa assistance',
+    ],
     'supporting_documents' => [
         'label' => 'Supporting Documents', 'icon' => 'document', 'eyebrow' => 'The details matter', 'title' => 'Your paperwork, better prepared.',
         'summary' => 'Organize travel plans, reservations, insurance, cover letters and the documents your application needs.',
@@ -36,6 +45,15 @@ return [
         'extra' => 'We also assist with appointments at VFS, BLS, embassies, consulates and relevant immigration departments.',
         'notice' => 'Required documents depend on your destination, nationality, application category and circumstances.',
         'cta' => 'Get document assistance',
+    ],
+    'visa_documents' => [
+        'label' => 'Visa Documents', 'icon' => 'document', 'eyebrow' => 'A clear visa checklist', 'title' => 'Get your visa documents organized.',
+        'summary' => 'Get help understanding visa forms, passport and photo requirements, financial evidence and supporting documents.',
+        'intro' => 'Visa document assistance for your travel plans. The documents required depend on your destination, nationality, visa category and personal circumstances. We help you organize the applicable checklist.',
+        'items' => ['Application forms' => 'Get guidance on completing the forms relevant to your visa application.', 'Passport and photographs' => 'Review passport validity and destination-specific photograph requirements.', 'Invitation and accommodation' => 'Organize applicable sponsorship, invitation and accommodation evidence.', 'Financial evidence' => 'Understand the financial documents requested for your application.', 'Travel and purpose documents' => 'Prepare travel plans and documents that support your stated purpose.', 'Document checklist' => 'Arrange your documents for the relevant embassy, consulate or visa center.'],
+        'extra' => 'Tell us your destination and proposed travel dates. You may upload relevant documents securely with your online application.',
+        'notice' => 'Final document requirements are set by the relevant embassy, consulate or visa center and can change.',
+        'cta' => 'Request visa document assistance',
     ],
     'attestation' => [
         'label' => 'Attestation Services', 'icon' => 'seal', 'eyebrow' => 'Prepared for international use', 'title' => 'Document authentication, step by step.',
