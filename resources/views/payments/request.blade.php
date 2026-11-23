@@ -3,7 +3,15 @@
 @section('content')
 <section class="section"><div class="container">
     <p class="eyebrow">EDU WORLD · PAYMENT REQUEST</p>
-    <h1>Your finalized payment request</h1>
+    @if (($linkBlocked ?? null) === 'expired')
+        <h1>Payment Link Expired</h1>
+        <div class="alert alert-error" role="alert">This payment link has expired. Please contact Eduworld or request a new payment link from the administrator.</div>
+    @elseif (($linkBlocked ?? null) === 'cancelled')
+        <h1>Payment Link Cancelled</h1>
+        <div class="alert alert-error" role="alert">This payment link was cancelled. Please contact Eduworld or request a new payment link from the administrator.</div>
+    @else
+        <h1>Your finalized payment request</h1>
+    @endif
     @if (session('payment_error'))
         <div class="alert alert-error" role="alert">{{ session('payment_error') }}</div>
     @endif
@@ -27,7 +35,8 @@
                 <dt>Payment description</dt><dd class="preserve-lines">{{ $paymentRequest->description }}</dd>
                 <dt>Agreed amount</dt><dd><strong>{{ $paymentRequest->currency }} {{ number_format((float) $paymentRequest->amount, 3) }}</strong></dd>
                 <dt>Currency</dt><dd>{{ $paymentRequest->currency }} · Bahraini dinar</dd>
-                <dt>Link expires</dt><dd>{{ $paymentRequest->expires_at->format('d M Y, H:i') }}</dd>
+                <dt>Link expires</dt><dd>{{ $paymentRequest->expires_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i') }} · Asia/Kolkata</dd>
+                @if ($paymentRequest->due_at)<dt>Payment due</dt><dd>{{ $paymentRequest->due_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i') }} · Asia/Kolkata</dd>@endif
                 <dt>Status</dt><dd><span class="badge">{{ $paymentRequest->statusLabel() }}</span></dd>
             </dl>
 
@@ -38,7 +47,7 @@
                 @endif
             @else
                 @if ($paymentRequest->status === 'sent')
-                    <form method="POST" action="{{ \Illuminate\Support\Facades\URL::temporarySignedRoute('pay.request.pay', $paymentRequest->expires_at, ['paymentRequest' => $paymentRequest]) }}">
+                    <form method="POST" action="{{ \Illuminate\Support\Facades\URL::signedRoute('pay.request.pay', ['paymentRequest' => $paymentRequest]) }}">
                         @csrf
                         <button class="button" type="submit">Pay securely via AFS</button>
                     </form>

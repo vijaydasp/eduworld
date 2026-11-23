@@ -21,6 +21,8 @@ Route::prefix('admin')->name('admin.')->middleware('auth')->group(function (): v
         Route::post('applications/{application}/payment-requests', [ApplicationPaymentRequestController::class, 'store'])->name('applications.payment-requests.store');
         Route::post('applications/{application}/payment-requests/{paymentRequest}/resend', [ApplicationPaymentRequestController::class, 'resend'])->name('applications.payment-requests.resend');
         Route::post('applications/{application}/payment-requests/{paymentRequest}/cancel', [ApplicationPaymentRequestController::class, 'cancel'])->name('applications.payment-requests.cancel');
+        Route::post('applications/{application}/payment-requests/{paymentRequest}/extend', [ApplicationPaymentRequestController::class, 'extend'])->name('applications.payment-requests.extend');
+        Route::post('applications/{application}/payment-requests/{paymentRequest}/replace', [ApplicationPaymentRequestController::class, 'replace'])->name('applications.payment-requests.replace');
         Route::get('documents/{document}/download', [AdminApplicationController::class, 'download'])->name('documents.download');
     });
     Route::middleware('can:manage-enquiries')->group(function (): void {

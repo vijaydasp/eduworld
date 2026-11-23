@@ -4,7 +4,9 @@ namespace App\Services\Payments;
 
 use App\Models\Payment;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\RateLimiter;
 use InvalidArgumentException;
 use LogicException;
 use RuntimeException;
@@ -63,14 +65,16 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         $data = $response->json();
         $checkoutId = is_array($data) ? ($data['id'] ?? null) : null;
         $resultCode = is_array($data) ? ($data['result']['code'] ?? null) : null;
+        $integrity = is_array($data) ? ($data['integrity'] ?? null) : null;
 
         if (! is_string($checkoutId)
             || preg_match(self::CHECKOUT_ID_PATTERN, $checkoutId) !== 1
-            || ! AfsResultCode::isCheckoutCreated(is_string($resultCode) ? $resultCode : null)) {
+            || ! AfsResultCode::isCheckoutCreated(is_string($resultCode) ? $resultCode : null)
+            || (config('payments.afs.widget_integrity') && ! $this->validIntegrity($integrity))) {
             throw new RuntimeException('AFS did not return a usable checkout session.');
         }
 
-        return new GatewayCheckout($baseUrl, $checkoutId);
+        return new GatewayCheckout($baseUrl, $checkoutId, $this->validIntegrity($integrity) ? $integrity : null);
     }
 
     public function widgetScriptUrl(string $checkoutReference): string
@@ -90,7 +94,17 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             throw new InvalidArgumentException('The AFS checkout reference is invalid.');
         }
 
-        return new GatewayCheckout($this->requiredBaseUrl(), $reference);
+        $integrity = data_get($payment->gateway_response, 'checkout_integrity');
+
+        if (config('payments.afs.widget_integrity') && ! $this->validIntegrity($integrity)) {
+            throw new InvalidArgumentException('The existing AFS checkout has no valid integrity value.');
+        }
+
+        return new GatewayCheckout(
+            $this->requiredBaseUrl(),
+            $reference,
+            $this->validIntegrity($integrity) ? $integrity : null,
+        );
     }
 
     public function verifyWebhook(Request $request): VerifiedPaymentEvent
@@ -112,7 +126,10 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
 
         // Never settle from the notification body. Query the provider for the authoritative
         // amount, currency, entity, payment type and result code.
-        return $this->eventFromStatus($this->paymentStatus($paymentId));
+        return $this->eventFromStatus($this->paymentStatus(
+            $paymentId,
+            $this->checkoutReferenceForWebhook($payload),
+        ));
     }
 
     public function verifyCheckoutReturn(Payment $payment, Request $request): ?VerifiedPaymentEvent
@@ -129,7 +146,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
                 throw new InvalidPaymentWebhook('The AFS return path does not belong to this checkout.');
             }
 
-            $status = $this->status(ltrim($resourcePath, '/'), allowMissing: true);
+            $status = $this->status(ltrim($resourcePath, '/'), allowMissing: true, checkoutReference: $payment->gateway_reference);
 
             return $status === null ? null : $this->checkoutEvent($status, $payment);
         }
@@ -137,7 +154,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         $paymentId = $request->query('id');
 
         if (is_string($paymentId) && preg_match(self::PAYMENT_ID_PATTERN, $paymentId) === 1) {
-            $status = $this->paymentStatus($paymentId);
+            $status = $this->paymentStatus($paymentId, (string) $payment->gateway_reference);
 
             if (($status['merchantTransactionId'] ?? null) !== $payment->transaction_reference) {
                 return null;
@@ -166,7 +183,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             return $this->refundEvent($status, $classification);
         }
 
-        if (! in_array($paymentType, ['DB', 'PA'], true)) {
+        if ($paymentType !== 'DB') {
             throw new DeferredPaymentWebhook('The AFS payment type is not supported for settlement.');
         }
 
@@ -178,6 +195,8 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             || ! $payment->gateway_reference) {
             throw new InvalidPaymentWebhook('The AFS transaction does not match a payment session.');
         }
+
+        $this->assertSupportedBrand($status, $classification);
 
         return $this->settlementEvent($status, $payment, $classification);
     }
@@ -195,15 +214,17 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
 
         $paymentType = strtoupper((string) ($status['paymentType'] ?? ''));
 
-        if (! in_array($paymentType, ['DB', 'PA'], true)) {
+        if ($paymentType !== 'DB') {
             return null;
         }
 
         $reference = $status['merchantTransactionId'] ?? null;
 
-        if ($reference !== null && ! hash_equals((string) $payment->transaction_reference, (string) $reference)) {
+        if (! is_string($reference) || ! hash_equals((string) $payment->transaction_reference, $reference)) {
             return null;
         }
+
+        $this->assertSupportedBrand($status, $classification);
 
         return $this->settlementEvent($status, $payment, $classification);
     }
@@ -229,6 +250,10 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             amountReceived: $classification === AfsResultCode::PAID ? $amount : '0.000',
             currency: $currency,
             providerReference: $this->providerReference($status),
+            paymentType: $this->providerString($status, 'paymentType'),
+            paymentBrand: $this->providerString($status, 'paymentBrand'),
+            resultCode: $this->resultCode($status),
+            transactionTimestamp: $this->transactionTimestamp($status),
         );
     }
 
@@ -274,6 +299,10 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             amountReceived: '0.000',
             currency: $currency,
             providerReference: $this->providerReference($status),
+            paymentType: $this->providerString($status, 'paymentType'),
+            paymentBrand: $this->providerString($status, 'paymentBrand'),
+            resultCode: $this->resultCode($status),
+            transactionTimestamp: $this->transactionTimestamp($status),
         );
     }
 
@@ -301,9 +330,9 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
     }
 
     /** @return array<string, mixed> */
-    private function paymentStatus(string $paymentId): array
+    private function paymentStatus(string $paymentId, string $checkoutReference): array
     {
-        $status = $this->status('v1/payments/'.rawurlencode($paymentId), allowMissing: false);
+        $status = $this->status('v1/payments/'.rawurlencode($paymentId), allowMissing: false, checkoutReference: $checkoutReference);
 
         if ($status === null || ($status['id'] ?? null) !== $paymentId) {
             throw new InvalidPaymentWebhook('AFS returned an unexpected payment status.');
@@ -313,8 +342,13 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
     }
 
     /** @return array<string, mixed>|null */
-    private function status(string $path, bool $allowMissing): ?array
+    private function status(string $path, bool $allowMissing, string $checkoutReference): ?array
     {
+        $rateLimitKey = 'afs-status:'.hash('sha256', $checkoutReference);
+        if (! RateLimiter::attempt($rateLimitKey, 2, fn (): bool => true, 60)) {
+            throw new DeferredPaymentWebhook('The AFS status request limit for this checkout has been reached.');
+        }
+
         $response = Http::withToken($this->requiredAccessToken())
             ->acceptJson()
             ->timeout(15)
@@ -334,7 +368,84 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             throw new InvalidPaymentWebhook('AFS returned an unexpected payment status.');
         }
 
+        $entityId = data_get($data, 'authentication.entityId');
+        if (! is_string($entityId) || ! hash_equals($this->requiredEntityId(), $entityId)) {
+            throw new InvalidPaymentWebhook('AFS returned a payment status for an unexpected merchant entity.');
+        }
+
         return $data;
+    }
+
+    /**
+     * Find the checkout that owns a webhook transaction so all AFS status
+     * lookups are throttled against the checkout, including refund events.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function checkoutReferenceForWebhook(array $payload): string
+    {
+        $reference = $payload['merchantTransactionId'] ?? null;
+        $payment = is_string($reference)
+            ? Payment::where('transaction_reference', $reference)->where('gateway', $this->name())->first()
+            : null;
+
+        if (! $payment && is_string($payload['referencedId'] ?? null)) {
+            $payment = Payment::where('gateway', $this->name())
+                ->where('gateway_response->provider_reference', $payload['referencedId'])
+                ->first();
+        }
+
+        if (! $payment || ! is_string($payment->gateway_reference) || $payment->gateway_reference === '') {
+            throw new InvalidPaymentWebhook('The AFS notification does not match a known checkout.');
+        }
+
+        return $payment->gateway_reference;
+    }
+
+    /**
+     * @param  array<string, mixed>  $status
+     */
+    private function assertSupportedBrand(array $status, string $classification): void
+    {
+        if ($classification !== AfsResultCode::PAID) {
+            return;
+        }
+
+        $brand = $status['paymentBrand'] ?? null;
+        $configuredBrands = preg_split('/[\s,]+/', strtoupper(trim((string) config('payments.afs.brands', ''))), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        if (! is_string($brand) || ! in_array(strtoupper($brand), $configuredBrands, true)) {
+            throw new DeferredPaymentWebhook('The AFS payment brand is not configured for this merchant.');
+        }
+    }
+
+    /** @param array<string, mixed> $status */
+    private function providerString(array $status, string $key): ?string
+    {
+        $value = $status[$key] ?? null;
+
+        return is_string($value) && $value !== '' ? mb_substr($value, 0, 40) : null;
+    }
+
+    /** @param array<string, mixed> $status */
+    private function transactionTimestamp(array $status): ?string
+    {
+        $value = $status['timestamp'] ?? null;
+        if (! is_string($value) || $value === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value)->utc()->toIso8601String();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function validIntegrity(mixed $integrity): bool
+    {
+        return is_string($integrity)
+            && preg_match('/\Asha(?:256|384|512)-[A-Za-z0-9+\/]+={0,2}(?:\s+sha(?:256|384|512)-[A-Za-z0-9+\/]+={0,2})*\z/', $integrity) === 1;
     }
 
     /**

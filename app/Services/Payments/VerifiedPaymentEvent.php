@@ -15,6 +15,10 @@ final readonly class VerifiedPaymentEvent
         public string $amountReceived,
         public string $currency,
         public ?string $providerReference = null,
+        public ?string $paymentType = null,
+        public ?string $paymentBrand = null,
+        public ?string $resultCode = null,
+        public ?string $transactionTimestamp = null,
     ) {
         if ($eventId === '' || strlen($eventId) > 150 || $transactionReference === '' || $gatewayReference === '' || strlen($gatewayReference) > 150 || ! in_array($status, ['paid', 'partially_paid', 'failed', 'refunded'], true)) {
             throw new InvalidArgumentException('Invalid verified payment event.');
@@ -33,7 +37,8 @@ final readonly class VerifiedPaymentEvent
         return hash('sha256', json_encode([
             $this->transactionReference, $this->gatewayReference, $this->status,
             BhdAmount::normalize($this->amount), BhdAmount::normalize($this->amountReceived), $this->currency,
-            $this->providerReference,
+            $this->providerReference, $this->paymentType, $this->paymentBrand, $this->resultCode,
+            $this->transactionTimestamp,
         ], JSON_THROW_ON_ERROR));
     }
 }

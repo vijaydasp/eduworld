@@ -26,9 +26,8 @@ class PaymentRequestReady extends Notification implements ShouldQueue
 
     public function toMail(object $notifiable): MailMessage
     {
-        $link = URL::temporarySignedRoute(
+        $link = URL::signedRoute(
             'pay.request.checkout',
-            $this->paymentRequest->expires_at,
             ['paymentRequest' => $this->paymentRequest],
         );
 
@@ -39,7 +38,7 @@ class PaymentRequestReady extends Notification implements ShouldQueue
                 ->line('Edu World has prepared a secure payment request for you.')
                 ->line('Payment description: '.$this->paymentRequest->description)
                 ->line('Amount due: BHD '.number_format((float) $this->paymentRequest->amount, 3))
-                ->line('This secure link expires on '.$this->paymentRequest->expires_at->format('d M Y, H:i').'.')
+                ->line('This secure link expires on '.$this->paymentRequest->expires_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i').' (Asia/Kolkata).')
                 ->action('Pay securely via AFS', $link)
                 ->line('The button opens the secure AFS (Arab Financial Services) payment form, where you can pay by card. Edu World never sees or stores your card number or security code.')
                 ->line('The amount and your payment details are already confirmed on the payment page. You will not need to change the amount.')
@@ -58,7 +57,7 @@ class PaymentRequestReady extends Notification implements ShouldQueue
             ->line('Application reference: '.$reference)
             ->line('Amount due: BHD '.number_format((float) $this->paymentRequest->amount, 3))
             ->line('Payment description: '.$this->paymentRequest->description)
-            ->line('This secure link expires on '.$this->paymentRequest->expires_at->format('d M Y, H:i').'.')
+            ->line('This secure link expires on '.$this->paymentRequest->expires_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i').' (Asia/Kolkata).')
             ->action('Pay securely via AFS', $link)
             ->line('The button opens the secure AFS (Arab Financial Services) payment form, where you can pay by card. Edu World never sees or stores your card number or security code.')
             ->line('The amount and your application details are already confirmed on the payment page. You will not need to enter an application reference or change the amount.')

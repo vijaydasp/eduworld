@@ -24,6 +24,8 @@ Route::prefix('admin/payments')->name('admin.payments.')->middleware(['auth', 'c
     Route::get('/requests/{paymentRequest}', [StandalonePaymentRequestController::class, 'show'])->name('requests.show');
     Route::post('/requests/{paymentRequest}/resend', [StandalonePaymentRequestController::class, 'resend'])->name('requests.resend');
     Route::post('/requests/{paymentRequest}/cancel', [StandalonePaymentRequestController::class, 'cancel'])->name('requests.cancel');
+    Route::post('/requests/{paymentRequest}/extend', [StandalonePaymentRequestController::class, 'extend'])->name('requests.extend');
+    Route::post('/requests/{paymentRequest}/replace', [StandalonePaymentRequestController::class, 'replace'])->name('requests.replace');
     Route::get('/offline/create', [AdminPaymentController::class, 'createOffline'])->middleware('can:manage-settings')->name('offline.create');
     Route::post('/offline', [AdminPaymentController::class, 'storeOffline'])->middleware('can:manage-settings')->name('offline.store');
     Route::get('/{payment}', [AdminPaymentController::class, 'show'])->name('show');

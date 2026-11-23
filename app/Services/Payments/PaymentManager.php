@@ -70,6 +70,23 @@ class PaymentManager
                 return null;
             }
 
+            $paymentRequest = PaymentRequest::query()
+                ->where('payment_id', $payment->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($paymentRequest) {
+                if ($paymentRequest->status === 'sent' && ! $paymentRequest->expires_at?->isFuture()) {
+                    $before = $paymentRequest->only(['status']);
+                    $paymentRequest->update(['status' => 'expired']);
+                    Audit::record('payment_request.expired', $paymentRequest, $before, ['status' => 'expired']);
+                }
+
+                if ($paymentRequest->status !== 'sent' || ! $paymentRequest->expires_at?->isFuture()) {
+                    return null;
+                }
+            }
+
             if ($resumed = $this->resumeExistingCheckout($payment, $gateway)) {
                 return $resumed;
             }
@@ -94,7 +111,7 @@ class PaymentManager
                 return null;
             }
 
-            $this->rememberCheckoutSession($payment, $checkout->reference);
+            $this->rememberCheckoutSession($payment, $checkout->reference, $checkout->integrity);
 
             return $checkout;
         }, 3);
@@ -137,7 +154,7 @@ class PaymentManager
      * Older references are kept for settlement in case a customer completes the previous
      * widget session while a new one is being created.
      */
-    private function rememberCheckoutSession(Payment $payment, string $reference): void
+    private function rememberCheckoutSession(Payment $payment, string $reference, ?string $integrity): void
     {
         $response = (array) ($payment->gateway_response ?? []);
         $previous = array_values(array_unique(array_filter(
@@ -147,6 +164,11 @@ class PaymentManager
 
         $response['checkout_started_at'] = now()->toIso8601String();
         $response['previous_checkout_references'] = $previous;
+        if ($integrity !== null) {
+            $response['checkout_integrity'] = $integrity;
+        } else {
+            unset($response['checkout_integrity']);
+        }
 
         $payment->update([
             'gateway_reference' => $reference,
@@ -269,11 +291,21 @@ class PaymentManager
                 'amount_received' => BhdAmount::normalize($event->amountReceived),
                 'paid_at' => $event->status === 'paid' ? now() : $payment->paid_at,
                 'refunded_at' => $event->status === 'refunded' ? now() : null,
+                'provider_payment_type' => $event->paymentType,
+                'provider_payment_brand' => $event->paymentBrand,
+                'provider_result_code' => $event->resultCode,
+                'provider_transaction_at' => $event->transactionTimestamp
+                    ? Carbon::parse($event->transactionTimestamp)
+                    : null,
                 'gateway_response' => array_filter([
                     'event_id' => $event->eventId,
                     'provider_reference' => $providerReference ?? $event->providerReference,
                     'verified_at' => now()->toIso8601String(),
                     'status' => $event->status,
+                    'provider_payment_type' => $event->paymentType,
+                    'provider_payment_brand' => $event->paymentBrand,
+                    'provider_result_code' => $event->resultCode,
+                    'provider_transaction_at' => $event->transactionTimestamp,
                 ], fn (mixed $value): bool => $value !== null),
             ]);
             $this->syncApplication($payment->application_id);

@@ -8,18 +8,26 @@ use App\Services\Payments\PaymentManager;
 use App\Services\Payments\PaymentRequestManager;
 use App\Services\Payments\RendersCheckoutWidget;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
 use Illuminate\View\View;
 
 class PaymentRequestController extends Controller
 {
-    public function show(PaymentRequest $paymentRequest, PaymentRequestManager $manager, PaymentManager $payments): View
+    public function show(PaymentRequest $paymentRequest, PaymentRequestManager $manager, PaymentManager $payments): View|Response
     {
         $manager->expireIfNeeded($paymentRequest);
         $paymentRequest->loadMissing(['application', 'payment']);
 
-        abort_if(in_array($paymentRequest->status, ['cancelled', 'expired'], true), 410, 'This payment request is no longer available.');
+        if (in_array($paymentRequest->status, ['cancelled', 'expired'], true)) {
+            return response()->view('payments.request', [
+                'paymentRequest' => $paymentRequest,
+                'receiptUrl' => null,
+                'gatewayAvailable' => $payments->gateway()->available(),
+                'linkBlocked' => $paymentRequest->status === 'expired' ? 'expired' : 'cancelled',
+            ], 410);
+        }
 
         $receiptUrl = $paymentRequest->payment
             ? URL::temporarySignedRoute('pay.receipt', now()->addDay(), ['payment' => $paymentRequest->payment->id])
@@ -62,9 +70,8 @@ class PaymentRequestController extends Controller
                 'gateway' => $payment->gateway,
             ]);
 
-            return redirect(URL::temporarySignedRoute(
+            return redirect(URL::signedRoute(
                 'pay.request.show',
-                $paymentRequest->expires_at,
                 ['paymentRequest' => $paymentRequest->public_id],
             ))->with('payment_error', 'We could not start the secure AFS payment right now. Please try again in a few moments, or contact us if the problem continues.');
         }

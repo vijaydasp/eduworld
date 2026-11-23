@@ -224,6 +224,7 @@ class PaymentRequestTest extends TestCase
             return Http::response([
                 'id' => self::PAYMENT_ID,
                 'paymentType' => 'DB',
+                'paymentBrand' => 'MASTER',
                 'amount' => '25.000',
                 'currency' => 'BHD',
                 'merchantTransactionId' => $payment->transaction_reference,

@@ -7,6 +7,7 @@ return [
     'driver' => env('PAYMENT_GATEWAY', 'disabled'),
     'currency' => 'BHD',
     'maximum_amount' => '100000.000',
+    'display_timezone' => 'Asia/Kolkata',
     // Minutes an existing provider checkout session may be reused instead of replaced.
     'checkout_reuse_minutes' => 25,
     // Standalone fees selectable on payment forms in addition to application services.
@@ -33,6 +34,7 @@ return [
         // 64-character hexadecimal secret configured under Administration > Webhooks.
         'webhook_secret' => env('AFS_WEBHOOK_SECRET'),
         'brands' => env('AFS_BRANDS', 'VISA MASTER'),
+        'widget_integrity' => filter_var(env('AFS_WIDGET_INTEGRITY', false), FILTER_VALIDATE_BOOL),
         'descriptor' => env('AFS_DESCRIPTOR', 'Edu World'),
         // Optional in the test environment only: INTERNAL (simulator) or EXTERNAL (acquirer test).
         'test_mode' => env('AFS_TEST_MODE'),

@@ -31,6 +31,7 @@ class PaymentRequestFactory extends Factory
             'description' => 'Agreed service fee',
             'status' => 'sent',
             'expires_at' => now()->addDays(7),
+            'due_at' => null,
             'sent_at' => now(),
             'paid_at' => null,
             'created_by' => null,

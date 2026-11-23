@@ -49,12 +49,20 @@ class Payment extends Model
         'application_id', 'transaction_reference', 'entered_reference', 'gateway',
         'gateway_reference', 'channel', 'customer_name', 'phone', 'email', 'service',
         'amount', 'amount_received', 'currency', 'status', 'remarks', 'gateway_response',
-        'paid_at', 'refunded_at', 'recorded_by', 'offline_reference',
+        'paid_at', 'refunded_at', 'recorded_by', 'offline_reference', 'provider_payment_type',
+        'provider_payment_brand', 'provider_result_code', 'provider_transaction_at',
     ];
 
     protected function casts(): array
     {
-        return ['amount' => 'decimal:3', 'amount_received' => 'decimal:3', 'gateway_response' => 'array', 'paid_at' => 'datetime', 'refunded_at' => 'datetime'];
+        return [
+            'amount' => 'decimal:3',
+            'amount_received' => 'decimal:3',
+            'gateway_response' => 'array',
+            'paid_at' => 'datetime',
+            'refunded_at' => 'datetime',
+            'provider_transaction_at' => 'datetime',
+        ];
     }
 
     public function application(): BelongsTo

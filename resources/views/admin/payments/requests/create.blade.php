@@ -12,7 +12,17 @@
         <div class="field"><label for="customer_phone">Customer phone (optional)</label><input id="customer_phone" name="customer_phone" type="tel" value="{{ old('customer_phone') }}" maxlength="30"></div>
         <div class="field"><label for="amount">Amount (BHD) *</label><input id="amount" name="amount" value="{{ old('amount') }}" inputmode="decimal" placeholder="0.000" pattern="[0-9]+(\.[0-9]{1,3})?" required><small>Up to three decimal places, between 0.001 and {{ config('payments.maximum_amount') }}.</small></div>
         <div class="field"><label for="currency">Currency</label><input id="currency" name="currency" value="BHD" readonly><small>All standalone requests use Bahraini dinar.</small></div>
-        <div class="field"><label for="validity_days">Payment link validity (days) *</label><input id="validity_days" name="validity_days" type="number" value="{{ old('validity_days', 7) }}" min="1" max="30" required></div>
+        <div class="field">
+            <label for="expiry_option">Payment link expiry *</label>
+            <select id="expiry_option" name="expiry_option" required>
+                @foreach(['1_hour'=>'1 hour','6_hours'=>'6 hours','12_hours'=>'12 hours','24_hours'=>'24 hours','2_days'=>'2 days','3_days'=>'3 days','7_days'=>'7 days','custom'=>'Custom date and time'] as $value => $label)
+                    <option value="{{ $value }}" @selected(old('expiry_option', '7_days') === $value)>{{ $label }}</option>
+                @endforeach
+            </select>
+            <small>Time zone: Asia/Kolkata</small>
+        </div>
+        <div class="field"><label for="custom_expires_at">Custom expiry date and time</label><input id="custom_expires_at" name="custom_expires_at" type="datetime-local" value="{{ old('custom_expires_at') }}"></div>
+        <div class="field"><label for="due_at">Optional payment due date</label><input id="due_at" name="due_at" type="datetime-local" value="{{ old('due_at') }}"><small>Optional; displayed to the customer.</small></div>
     </div>
     <div class="field"><label for="description">Payment description *</label><input id="description" name="description" value="{{ old('description') }}" maxlength="255" placeholder="e.g. Consultation and document review fee" required></div>
     <div class="field"><label><input type="checkbox" name="confirmed" value="1" @checked(old('confirmed')) required> I confirm the amount, customer details and description are correct.</label></div>

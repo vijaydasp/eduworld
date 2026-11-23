@@ -68,6 +68,7 @@ class PaymentController extends Controller
         abort_unless($gateway instanceof RendersCheckoutWidget, 503, 'Online payments are not configured.');
         abort_unless($payment->channel === 'gateway' && $payment->status === 'pending', 404);
         abort_unless($payment->gateway_reference && hash_equals($gateway->name(), (string) $payment->gateway), 404);
+        abort_if(config('payments.afs.widget_integrity') && ! is_string(data_get($payment->gateway_response, 'checkout_integrity')), 503, 'The secure payment form is not available.');
 
         $scriptUrl = $gateway->widgetScriptUrl($payment->gateway_reference);
         $origin = parse_url($scriptUrl, PHP_URL_SCHEME).'://'.parse_url($scriptUrl, PHP_URL_HOST);
@@ -91,6 +92,7 @@ class PaymentController extends Controller
         return response()->view('payments.checkout', [
             'payment' => $payment,
             'scriptUrl' => $scriptUrl,
+            'scriptIntegrity' => data_get($payment->gateway_response, 'checkout_integrity'),
             'resultUrl' => $payments->returnUrl($payment),
             'brands' => (string) config('payments.afs.brands', 'VISA MASTER'),
         ])->withHeaders(['Content-Security-Policy' => $contentSecurityPolicy]);

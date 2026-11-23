@@ -22,9 +22,9 @@
             <td>BHD {{ number_format((float) $paymentRequest->amount, 3) }}<br><small>{{ $paymentRequest->currency }}</small></td>
             <td>{{ $paymentRequest->description }}</td>
             <td><span class="badge">{{ $paymentRequest->statusLabel() }}</span></td>
-            <td>{{ $paymentRequest->created_at->format('d M Y, H:i') }}</td>
+            <td>{{ $paymentRequest->created_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i') }}<br><small>Asia/Kolkata</small></td>
             <td>{{ $paymentRequest->sent_at?->format('d M Y, H:i') ?? 'Not sent' }}</td>
-            <td>{{ $paymentRequest->expires_at->format('d M Y, H:i') }}</td>
+            <td>{{ $paymentRequest->expires_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i') }}<br><small>@if($paymentRequest->status === 'sent' && $paymentRequest->expires_at->isFuture()) Remaining: {{ now()->diff($paymentRequest->expires_at)->forHumans(['parts'=>2]) }}@else {{ $paymentRequest->status === 'expired' ? 'Expired' : $paymentRequest->statusLabel() }}@endif</small></td>
             <td>{{ $paymentRequest->paid_at?->format('d M Y, H:i') ?? '—' }}</td>
             <td>@if ($requestPayment)<a href="{{ route('admin.payments.show', $requestPayment) }}">{{ $requestPayment->transaction_reference }}</a>@else — @endif</td>
             <td>

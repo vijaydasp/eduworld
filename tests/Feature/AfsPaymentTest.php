@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -88,6 +89,7 @@ class AfsPaymentTest extends TestCase
         $this->get($checkoutUrl)
             ->assertOk()
             ->assertSee('https://eu-test.oppwa.com/v1/paymentWidgets.js?checkoutId='.self::CHECKOUT_ID, false)
+            ->assertSee('crossorigin="anonymous"', false)
             ->assertSee('data-brands="VISA MASTER"', false)
             ->assertSee($payment->transaction_reference);
     }
@@ -188,6 +190,10 @@ class AfsPaymentTest extends TestCase
         $this->assertSame('paid', $payment->status);
         $this->assertSame('12.345', $payment->amount_received);
         $this->assertSame(self::PAYMENT_ID, $payment->gateway_response['provider_reference']);
+        $this->assertSame('DB', $payment->provider_payment_type);
+        $this->assertSame('MASTER', $payment->provider_payment_brand);
+        $this->assertSame('000.000.000', $payment->provider_result_code);
+        $this->assertNotNull($payment->provider_transaction_at);
         $this->assertDatabaseCount('payment_events', 1);
         $this->assertDatabaseHas('payment_events', ['event_id' => self::PAYMENT_ID.':000.000.000', 'status' => 'paid']);
         Notification::assertSentOnDemandTimes(PaymentConfirmed::class, 1);
@@ -218,6 +224,73 @@ class AfsPaymentTest extends TestCase
 
         $this->assertSame('pending', $payment->fresh()->status);
         $this->assertDatabaseCount('payment_events', 0);
+    }
+
+    public function test_technical_and_unknown_result_codes_remain_pending(): void
+    {
+        $payment = $this->pendingPayment();
+        $this->fakePaymentStatus($this->providerStatus($payment, '900.100.100'));
+
+        $this->sendWebhook($this->notification($payment))
+            ->assertStatus(202)
+            ->assertJson(['received' => true, 'status' => 'pending']);
+
+        $this->assertSame('pending', $payment->fresh()->status);
+        $this->assertDatabaseCount('payment_events', 0);
+    }
+
+    public function test_payment_status_requests_are_limited_to_two_per_checkout_per_minute(): void
+    {
+        RateLimiter::clear('afs-status:'.hash('sha256', self::CHECKOUT_ID));
+        Http::fake([
+            'https://eu-test.oppwa.com/v1/checkouts/*' => Http::response([
+                'id' => self::PAYMENT_ID,
+                'paymentType' => 'DB',
+                'merchantTransactionId' => 'EWP-2026-0000123',
+                'result' => ['code' => '000.200.000'],
+                'authentication' => ['entityId' => self::ENTITY_ID],
+            ]),
+        ]);
+        $payment = $this->pendingPayment();
+
+        foreach (range(1, 3) as $_) {
+            $this->get(route('pay.return', [
+                'reference' => $payment->transaction_reference,
+                'resourcePath' => '/v1/checkouts/'.self::CHECKOUT_ID.'/payment',
+            ]))->assertRedirect();
+        }
+
+        Http::assertSentCount(2);
+        $this->assertSame('pending', $payment->fresh()->status);
+    }
+
+    public function test_widget_uses_checkout_integrity_when_configured(): void
+    {
+        config(['payments.afs.widget_integrity' => true]);
+        $integrity = 'sha384-YWZjaGRlZmdoaWprbG1ub3BxcnN0dXZ3eHl6';
+        Http::fake([
+            'https://eu-test.oppwa.com/v1/checkouts' => Http::response([
+                'id' => self::CHECKOUT_ID,
+                'integrity' => $integrity,
+                'result' => ['code' => '000.200.100'],
+            ]),
+        ]);
+
+        $payment = app(PaymentManager::class)->createIntent([
+            'customer_name' => 'Test Applicant',
+            'phone' => '+97333640001',
+            'email' => 'payer@example.test',
+            'service' => 'other',
+            'amount' => '12.345',
+        ]);
+        app(PaymentManager::class)->checkout($payment);
+        $payment->refresh();
+        $url = URL::temporarySignedRoute('pay.checkout', now()->addMinutes(35), ['payment' => $payment->id]);
+
+        $this->get($url)
+            ->assertOk()
+            ->assertSee('integrity="'.$integrity.'"', false)
+            ->assertSee('crossorigin="anonymous"', false);
         Notification::assertNothingSent();
     }
 
@@ -328,6 +401,7 @@ class AfsPaymentTest extends TestCase
 
         $this->sendWebhook([
             'id' => $refundPaymentId,
+            'referencedId' => $originalPaymentId,
             'merchantTransactionId' => 'REFUND-REFERENCE',
             'result' => ['code' => '000.000.000'],
             'authentication' => ['entityId' => self::ENTITY_ID],
@@ -370,6 +444,7 @@ class AfsPaymentTest extends TestCase
             'paymentBrand' => 'MASTER',
             'amount' => '12.345',
             'currency' => 'BHD',
+            'timestamp' => now()->toIso8601String(),
             'merchantTransactionId' => $payment->transaction_reference,
             'result' => ['code' => $code, 'description' => 'Provider result'],
             'authentication' => ['entityId' => self::ENTITY_ID],

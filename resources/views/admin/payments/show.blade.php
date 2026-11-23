@@ -13,6 +13,12 @@
     <dt>Status</dt><dd><span class="badge">{{ str($payment->status)->replace('_', ' ')->title() }}</span></dd>
     <dt>Channel</dt><dd>{{ $payment->channel === 'offline' ? 'Offline receipt recorded by an administrator' : 'Online payment request' }}</dd>
     <dt>Provider</dt><dd>{{ $payment->gateway }}</dd><dt>Provider / offline reference</dt><dd>{{ $payment->gateway_reference ?: ($payment->offline_reference ?: 'Not available') }}</dd>
+    @if ($payment->channel === 'gateway')
+        <dt>Provider payment type</dt><dd>{{ $payment->provider_payment_type ?: 'Not available' }}</dd>
+        <dt>Provider payment brand</dt><dd>{{ $payment->provider_payment_brand ?: 'Not available' }}</dd>
+        <dt>Provider result code</dt><dd>{{ $payment->provider_result_code ?: 'Not available' }}</dd>
+        <dt>Provider transaction time</dt><dd>{{ $payment->provider_transaction_at?->format('d M Y H:i:s') ?? 'Not available' }}</dd>
+    @endif
     <dt>Reference entered by customer</dt><dd>{{ $payment->entered_reference ?: 'Not supplied' }}</dd>
     @if ($payment->recordedBy)<dt>Recorded by</dt><dd>{{ $payment->recordedBy->name }}</dd>@endif
     @if ($payment->paid_at)<dt>Fully paid at</dt><dd>{{ $payment->paid_at->format('d M Y H:i') }}</dd>@endif

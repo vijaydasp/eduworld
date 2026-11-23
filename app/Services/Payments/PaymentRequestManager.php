@@ -8,6 +8,9 @@ use App\Models\PaymentRequest;
 use App\Models\User;
 use App\Notifications\PaymentRequestReady;
 use App\Services\Audit;
+use DateTimeImmutable;
+use DateTimeZone;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\ValidationException;
@@ -22,7 +25,7 @@ class PaymentRequestManager
      * An existing unpaid request must be explicitly replaced so duplicates are not
      * created by an accidental double submission.
      *
-     * @param  array{amount: string, description: string, validity_days: int, replace_existing?: bool}  $data
+     * @param  array<string, mixed>  $data
      */
     public function create(Application $application, array $data, User $user): PaymentRequest
     {
@@ -64,7 +67,8 @@ class PaymentRequestManager
                 'currency' => 'BHD',
                 'description' => $data['description'],
                 'status' => 'sent',
-                'expires_at' => now()->addDays(max(1, (int) ($data['validity_days'] ?? 7))),
+                'expires_at' => $this->resolveExpiry($data),
+                'due_at' => $this->resolveDueDate($data),
                 'created_by' => $user->id,
             ]);
 
@@ -79,7 +83,7 @@ class PaymentRequestManager
     /**
      * Create and email an administrator-only request that is not linked to an application.
      *
-     * @param  array{customer_name: string, customer_email: string, customer_phone?: ?string, amount: string, description: string, validity_days?: int}  $data
+     * @param  array<string, mixed>  $data
      */
     public function createStandalone(array $data, User $user): PaymentRequest
     {
@@ -94,7 +98,8 @@ class PaymentRequestManager
                 'currency' => 'BHD',
                 'description' => $data['description'],
                 'status' => 'sent',
-                'expires_at' => now()->addDays(max(1, (int) ($data['validity_days'] ?? 7))),
+                'expires_at' => $this->resolveExpiry($data),
+                'due_at' => $this->resolveDueDate($data),
                 'created_by' => $user->id,
             ]);
 
@@ -167,9 +172,168 @@ class PaymentRequestManager
         });
     }
 
+    /**
+     * Extend an unpaid request without changing its amount or customer.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function extend(PaymentRequest $paymentRequest, array $data, User $user): PaymentRequest
+    {
+        return DB::transaction(function () use ($paymentRequest, $data, $user): PaymentRequest {
+            $locked = PaymentRequest::query()->lockForUpdate()->findOrFail($paymentRequest->id);
+            abort_unless(in_array($locked->status, ['sent', 'expired'], true), 409, 'Only an unpaid payment request can be extended.');
+            abort_if($locked->payment && in_array($locked->payment->status, ['paid', 'partially_paid', 'refunded'], true), 409, 'A settled payment cannot be changed.');
+
+            $expiresAt = $this->resolveExpiry($data);
+            $dueAt = array_key_exists('due_at', $data)
+                ? $this->resolveDueDate($data)
+                : $locked->due_at;
+            $before = $locked->only(['status', 'expires_at', 'due_at']);
+            $locked->update([
+                'status' => 'sent',
+                'expires_at' => $expiresAt,
+                'due_at' => $dueAt,
+            ]);
+
+            Audit::record('payment_request.expiry_extended', $locked, $before, [
+                'status' => 'sent',
+                'expires_at' => $expiresAt->toIso8601String(),
+                'due_at' => $dueAt?->toIso8601String(),
+                'extended_by' => $user->id,
+            ]);
+
+            return $locked;
+        }, 5);
+    }
+
+    /**
+     * Cancel an unpaid request and create a replacement carrying the same
+     * amount and customer details.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function replace(PaymentRequest $paymentRequest, array $data, User $user): PaymentRequest
+    {
+        return DB::transaction(function () use ($paymentRequest, $data, $user): PaymentRequest {
+            $locked = PaymentRequest::query()->lockForUpdate()->findOrFail($paymentRequest->id);
+            $locked->loadMissing(['application', 'payment']);
+
+            abort_unless(in_array($locked->status, ['sent', 'expired', 'cancelled'], true), 409, 'Only an unpaid payment request can be replaced.');
+            abort_if($locked->payment && in_array($locked->payment->status, ['paid', 'partially_paid', 'refunded'], true), 409, 'A settled payment cannot be replaced.');
+
+            $oldStatus = $locked->status;
+            $before = $locked->only(['status']);
+            $locked->update(['status' => 'cancelled']);
+            Audit::record('payment_request.replaced', $locked, $before, [
+                'status' => 'cancelled',
+                'replacement_reason' => 'admin_replacement',
+                'preserved_payment_attempts' => $locked->payment_id !== null,
+            ]);
+
+            $replacement = $locked->application_id
+                ? $locked->application->paymentRequests()->create([
+                    'type' => PaymentRequest::TYPE_APPLICATION,
+                    'amount' => $locked->amount,
+                    'currency' => $locked->currency,
+                    'description' => $locked->description,
+                    'status' => 'sent',
+                    'expires_at' => $this->resolveExpiry($data),
+                    'due_at' => $this->resolveDueDate($data) ?? $locked->due_at,
+                    'created_by' => $user->id,
+                ])
+                : PaymentRequest::create([
+                    'type' => PaymentRequest::TYPE_STANDALONE,
+                    'application_id' => null,
+                    'customer_name' => $locked->customer_name,
+                    'customer_email' => $locked->customer_email,
+                    'customer_phone' => $locked->customer_phone,
+                    'amount' => $locked->amount,
+                    'currency' => $locked->currency,
+                    'description' => $locked->description,
+                    'status' => 'sent',
+                    'expires_at' => $this->resolveExpiry($data),
+                    'due_at' => $this->resolveDueDate($data) ?? $locked->due_at,
+                    'created_by' => $user->id,
+                ]);
+
+            Audit::record('payment_request.created', $replacement, [], [
+                'type' => $replacement->type,
+                'application_id' => $replacement->application_id,
+                'amount' => $replacement->amount,
+                'currency' => $replacement->currency,
+                'description' => $replacement->description,
+                'status' => 'sent',
+                'expires_at' => $replacement->expires_at->toIso8601String(),
+                'due_at' => $replacement->due_at?->toIso8601String(),
+                'replaces_request_id' => $locked->id,
+                'previous_status' => $oldStatus,
+            ]);
+
+            return $replacement;
+        }, 5);
+    }
+
+    private function resolveExpiry(array $data): Carbon
+    {
+        $timezone = (string) config('payments.display_timezone', 'Asia/Kolkata');
+        $option = (string) ($data['expiry_option'] ?? '');
+
+        try {
+            $expiry = match ($option) {
+                '1_hour' => now()->addHour(),
+                '6_hours' => now()->addHours(6),
+                '12_hours' => now()->addHours(12),
+                '24_hours' => now()->addHours(24),
+                '2_days' => now()->addDays(2),
+                '3_days' => now()->addDays(3),
+                '7_days' => now()->addDays(7),
+                'custom' => $this->parseLocalDateTime((string) ($data['custom_expires_at'] ?? ''), $timezone),
+                default => now()->addDays(max(1, (int) ($data['validity_days'] ?? 7))),
+            };
+        } catch (Throwable) {
+            abort(422, 'A valid payment link expiry is required.');
+        }
+
+        abort_unless($expiry instanceof Carbon, 422, 'A valid payment link expiry is required.');
+        abort_unless($expiry->isFuture(), 422, 'The payment link expiry must be in the future.');
+
+        $dueAt = $this->resolveDueDate($data);
+        if ($dueAt && $dueAt->greaterThan($expiry)) {
+            abort(422, 'The payment due date cannot be later than the link expiry.');
+        }
+
+        return $expiry->utc();
+    }
+
+    private function resolveDueDate(array $data): ?Carbon
+    {
+        $value = trim((string) ($data['due_at'] ?? ''));
+
+        if ($value === '') {
+            return null;
+        }
+
+        $timezone = (string) config('payments.display_timezone', 'Asia/Kolkata');
+        $dueAt = $this->parseLocalDateTime($value, $timezone);
+
+        return $dueAt->utc();
+    }
+
+    private function parseLocalDateTime(string $value, string $timezone): Carbon
+    {
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d\TH:i', $value, new DateTimeZone($timezone));
+        $errors = DateTimeImmutable::getLastErrors();
+
+        if (! $date || ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))) {
+            throw ValidationException::withMessages(['custom_expires_at' => 'Enter a valid date and time in Asia/Kolkata.']);
+        }
+
+        return Carbon::instance($date);
+    }
+
     public function expireIfNeeded(PaymentRequest $paymentRequest): void
     {
-        if ($paymentRequest->status !== 'sent' || $paymentRequest->expires_at === null || ! $paymentRequest->expires_at->isPast()) {
+        if ($paymentRequest->status !== 'sent' || $paymentRequest->expires_at === null || $paymentRequest->expires_at->isFuture()) {
             return;
         }
 

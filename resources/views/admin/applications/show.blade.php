@@ -103,7 +103,17 @@
             @csrf
             <div class="grid form-grid">
                 <div class="field"><label for="amount">Agreed amount (BHD)</label><input id="amount" name="amount" value="{{ old('amount') }}" inputmode="decimal" placeholder="0.000" pattern="[0-9]+(\.[0-9]{1,3})?" required><small>Up to three decimal places, between 0.001 and {{ config('payments.maximum_amount') }}.</small></div>
-                <div class="field"><label for="validity_days">Payment link validity (days)</label><input id="validity_days" name="validity_days" type="number" value="{{ old('validity_days', 7) }}" min="1" max="30" required></div>
+                <div class="field">
+                    <label for="expiry_option">Payment link expiry</label>
+                    <select id="expiry_option" name="expiry_option" required>
+                        @foreach(['1_hour'=>'1 hour','6_hours'=>'6 hours','12_hours'=>'12 hours','24_hours'=>'24 hours','2_days'=>'2 days','3_days'=>'3 days','7_days'=>'7 days','custom'=>'Custom date and time'] as $value => $label)
+                            <option value="{{ $value }}" @selected(old('expiry_option', '7_days') === $value)>{{ $label }}</option>
+                        @endforeach
+                    </select>
+                    <small>Time zone: Asia/Kolkata</small>
+                </div>
+                <div class="field"><label for="custom_expires_at">Custom expiry date and time</label><input id="custom_expires_at" name="custom_expires_at" type="datetime-local" value="{{ old('custom_expires_at') }}"></div>
+                <div class="field"><label for="due_at">Optional payment due date</label><input id="due_at" name="due_at" type="datetime-local" value="{{ old('due_at') }}"></div>
             </div>
             <div class="field"><label for="description">Payment description</label><input id="description" name="description" value="{{ old('description') }}" maxlength="255" placeholder="e.g. Study abroad service fee" required></div>
             @if($activeRequest)
@@ -124,9 +134,9 @@
                 <td><small title="{{ $request->public_id }}">{{ $request->public_id }}</small></td>
                 <td>BHD {{ number_format((float) $request->amount, 3) }}</td>
                 <td>{{ $request->description }}</td>
-                <td>{{ $request->created_at->format('d M Y, H:i') }}</td>
+                <td>{{ $request->created_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i') }}</td>
                 <td>{{ $request->sent_at?->format('d M Y, H:i') ?? 'Not sent' }}</td>
-                <td>{{ $request->expires_at->format('d M Y, H:i') }}</td>
+                <td>{{ $request->expires_at->copy()->setTimezone(config('payments.display_timezone', 'Asia/Kolkata'))->format('d M Y, H:i') }}<br><small>Asia/Kolkata@if($request->status === 'sent' && $request->expires_at->isFuture()) · {{ now()->diff($request->expires_at)->forHumans(['parts'=>2]) }} remaining@endif</small></td>
                 <td><span class="badge">{{ $request->statusLabel() }}</span></td>
                 <td>{{ $requestPayment?->transaction_reference ?? '—' }}</td>
                 <td>{{ data_get($requestPayment?->gateway_response, 'provider_reference') ?? $requestPayment?->gateway_reference ?? '—' }}</td>
@@ -135,6 +145,18 @@
                     @if($request->status === 'sent')
                         <form method="post" action="{{ route('admin.applications.payment-requests.resend', [$application, $request]) }}">@csrf<button class="button button-secondary" type="submit">Resend payment email</button></form>
                         <form method="post" action="{{ route('admin.applications.payment-requests.cancel', [$application, $request]) }}">@csrf<button class="button button-secondary" type="submit">Cancel unpaid request</button></form>
+                        <form method="post" action="{{ route('admin.applications.payment-requests.extend', [$application, $request]) }}" class="inline-expiry-form">@csrf
+                            <select name="expiry_option" aria-label="Extended expiry" required>@foreach(['1_hour'=>'1 hour','6_hours'=>'6 hours','12_hours'=>'12 hours','24_hours'=>'24 hours','2_days'=>'2 days','3_days'=>'3 days','7_days'=>'7 days','custom'=>'Custom'] as $value => $label)<option value="{{ $value }}" @selected($value === '7_days')>{{ $label }}</option>@endforeach</select>
+                            <input type="datetime-local" name="custom_expires_at" aria-label="Custom expiry">
+                            <button class="button button-secondary" type="submit">Extend</button>
+                        </form>
+                    @endif
+                    @if(in_array($request->status, ['sent', 'expired', 'cancelled'], true))
+                        <form method="post" action="{{ route('admin.applications.payment-requests.replace', [$application, $request]) }}" class="inline-expiry-form">@csrf
+                            <select name="expiry_option" aria-label="Replacement expiry" required>@foreach(['1_hour'=>'1 hour','6_hours'=>'6 hours','12_hours'=>'12 hours','24_hours'=>'24 hours','2_days'=>'2 days','3_days'=>'3 days','7_days'=>'7 days','custom'=>'Custom'] as $value => $label)<option value="{{ $value }}" @selected($value === '7_days')>{{ $label }}</option>@endforeach</select>
+                            <input type="datetime-local" name="custom_expires_at" aria-label="Custom expiry">
+                            <button class="button" type="submit">Replace link</button>
+                        </form>
                     @endif
                     @if($requestPayment)
                         @can('manage-payments')<a href="{{ route('admin.payments.show', $requestPayment) }}">View transaction</a>@endcan

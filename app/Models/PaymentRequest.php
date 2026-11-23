@@ -25,7 +25,7 @@ class PaymentRequest extends Model
     protected $fillable = [
         'public_id', 'type', 'application_id', 'payment_id', 'customer_name',
         'customer_email', 'customer_phone', 'amount', 'currency', 'description',
-        'status', 'expires_at', 'sent_at', 'paid_at', 'created_by',
+        'status', 'expires_at', 'due_at', 'sent_at', 'paid_at', 'created_by',
     ];
 
     protected $attributes = [
@@ -39,6 +39,7 @@ class PaymentRequest extends Model
         return [
             'amount' => 'decimal:3',
             'expires_at' => 'datetime',
+            'due_at' => 'datetime',
             'sent_at' => 'datetime',
             'paid_at' => 'datetime',
         ];

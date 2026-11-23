@@ -7,7 +7,7 @@
             locale: "en"
         };
     </script>
-    <script src="{{ $scriptUrl }}"></script>
+    <script src="{{ $scriptUrl }}" @if ($scriptIntegrity) integrity="{{ $scriptIntegrity }}" @endif crossorigin="anonymous"></script>
 @endpush
 @section('content')
 <section class="section"><div class="container">

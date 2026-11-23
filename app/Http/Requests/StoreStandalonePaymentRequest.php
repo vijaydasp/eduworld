@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\FutureKolkataDateTime;
 use App\Services\Payments\BhdAmount;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -37,7 +38,10 @@ class StoreStandalonePaymentRequest extends FormRequest
             }],
             'currency' => ['nullable', Rule::in(['BHD'])],
             'description' => ['required', 'string', 'max:255'],
-            'validity_days' => ['required', 'integer', 'min:1', 'max:30'],
+            'validity_days' => ['nullable', 'integer', 'min:1', 'max:30'],
+            'expiry_option' => ['nullable', Rule::in(['1_hour', '6_hours', '12_hours', '24_hours', '2_days', '3_days', '7_days', 'custom'])],
+            'custom_expires_at' => ['nullable', 'required_if:expiry_option,custom', 'date_format:Y-m-d\TH:i', new FutureKolkataDateTime],
+            'due_at' => ['nullable', 'date_format:Y-m-d\TH:i'],
             'confirmed' => ['accepted'],
             // Standalone requests are never linked to an application by browser input.
             'application_id' => ['prohibited'],

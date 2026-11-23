@@ -25,13 +25,14 @@ final class AfsResultCode
     private const SUCCESS_PATTERN = '/\A(?:000\.000\.|000\.100\.1|000\.[36]|000\.400\.(?:110|120)|000\.500\.)/';
 
     /**
-     * Hard declines, validation/configuration errors, risk rejections and communication errors.
-     * Success-with-review codes such as 000.400.020 are intentionally excluded.
+     * Provider-documented hard declines and rejected authorization/3DS outcomes.
+     * Technical, ambiguous, risk-review, and unknown codes remain pending.
      */
-    private const FAILURE_PATTERN = '/\A(?:800\.|900\.|600\.|500\.|700\.|999\.|100\.(?:15|25|35|36|38|39|40)|300\.100\.100|000\.400\.(?:030|1[0-9][1-9]|200))/';
+    private const FAILURE_PATTERN = '/\A(?:800\.[17]00|800\.800\.[123]|000\.400\.(?:1[0-9][1-9]|2))/';
 
     /**
-     * Open sessions and delayed finalization. These are valid notifications but not settlements.
+     * Open sessions and delayed finalization. Technical/API errors are also left
+     * pending by default instead of being treated as a definitive payment failure.
      */
     private const PENDING_PATTERN = '/\A(?:000\.200\.|800\.400\.5|100\.400\.500)/';
 
@@ -58,13 +59,11 @@ final class AfsResultCode
         return self::PENDING;
     }
 
-    /** A checkout is created by 000.200.100; some test modes return a regular success code. */
+    /** AFS indicates a prepared checkout with one of these documented result codes. */
     public static function isCheckoutCreated(?string $code): bool
     {
         $code = trim((string) $code);
 
-        return $code === '000.200.100'
-            || $code === '000.200.101'
-            || self::classify($code) === self::PAID;
+        return in_array($code, ['000.200.100', '000.200.101'], true);
     }
 }

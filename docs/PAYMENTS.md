@@ -97,6 +97,7 @@ AFS_ACCESS_TOKEN=...
 AFS_WEBHOOK_SECRET=...                    # 64-character hexadecimal key from AFS Administration → Webhooks
 PAYMENT_WEBHOOK_SECRET=...                # existing generic provider secret, if used by another adapter
 AFS_BRANDS="VISA MASTER"
+AFS_WIDGET_INTEGRITY=false                 # enable only when AFS returns the widget SRI value
 AFS_DESCRIPTOR="Edu World"
 AFS_TEST_MODE=                            # optional: INTERNAL or EXTERNAL; never sent to production
 ```
@@ -105,7 +106,9 @@ Do not commit real credentials or change production environment variables from t
 
 Checkout creation is server-to-server (`POST /v1/checkouts`) using the stored BHD amount and `transaction_reference` as `merchantTransactionId`. AFS accepts at most two decimal places (`#.##`), so a three-decimal BHD value such as `12.345` is rounded half-up to `12.35` only for the gateway request; the stored amount keeps three-decimal precision. Settlement compares the gateway amount using the same rounding, so a verified charge of `12.35` settles a `12.345` request without an amount mismatch. The returned checkout ID is rendered with the COPYandPAY widget on our own signed page; shoppers are not redirected to a provider URL. The widget page has a restrictive Content Security Policy.
 
-Webhook notifications (`POST /payments/webhook/afs`) are AES-256-GCM bodies decrypted with `X-Initialization-Vector` and `X-Authentication-Tag`. The decrypted `type` must be `PAYMENT`, the merchant entity must match `AFS_ENTITY_ID`, and embedded body amounts/statuses are ignored. The gateway re-queries `GET /v1/payments/{id}` and settles only from that authoritative response. The shopper return similarly queries `GET /v1/checkouts/{id}/payment`. Result codes are classified by `AfsResultCode`; only documented success codes settle, documented declines fail, and open/unknown states return `202` with no change. Only full refunds of settled funds are supported.
+The widget script always uses `crossorigin="anonymous"`. If AFS includes an SRI `integrity` value in the checkout response, it is retained for widget rendering; setting `AFS_WIDGET_INTEGRITY=true` requires a valid provider-returned SRI value and rejects checkout creation otherwise. This controls the HTML script integrity attribute; no undocumented `integrity` checkout parameter is sent.
+
+Webhook notifications (`POST /payments/webhook/afs`) are AES-256-GCM bodies decrypted with `X-Initialization-Vector` and `X-Authentication-Tag`. The decrypted `type` must be `PAYMENT`, the merchant entity must match `AFS_ENTITY_ID`, and embedded body amounts/statuses are ignored. The gateway re-queries `GET /v1/payments/{id}` and settles only from that authoritative response. Status responses must match the configured entity; successful DB transactions must also have a configured payment brand and matching merchant transaction reference. A Laravel cache-backed rate limiter allows at most two status requests per checkout per minute across shopper returns and webhook verification; production nodes must use a shared cache store. Result codes are classified by `AfsResultCode`; documented success codes settle, documented hard declines/rejections fail, and technical, review, open, and unknown outcomes remain pending. Provider payment ID, type, brand, result code, and transaction timestamp are retained for reconciliation. Only full refunds of settled funds are supported.
 
 ### Testing 3D Secure challenges
 
