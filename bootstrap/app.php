@@ -35,7 +35,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->redirectGuestsTo(fn () => route('login'));
         $middleware->redirectUsersTo(fn () => route('admin.dashboard'));
-        $middleware->trustHosts(at: fn () => ['^'.preg_quote((string) (parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST) ?: 'localhost')).'$'], subdomains: false);
+        $middleware->trustHosts(at: fn () => ['^'.preg_quote((string) (parse_url((string) config('app.url', 'http://localhost'), PHP_URL_HOST) ?: 'localhost')).'$'], subdomains: false);
         $middleware->web(append: [ActiveUser::class, SecurityHeaders::class]);
         $middleware->alias(['captcha' => VerifyCaptcha::class]);
         $middleware->validateCsrfTokens(except: ['payments/webhook/*']);

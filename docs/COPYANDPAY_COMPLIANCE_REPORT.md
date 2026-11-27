@@ -229,3 +229,13 @@ In addition to the prior report's inventory, this read-only audit traced `routes
 - [3DS Request Parameters](https://hyperpay.docs.oppwa.com/tutorials/threeDSecure/Parameters) — 3DS risk/browser data, challenge preference and challenge indicator semantics.
 - [OPPWA Result Codes](https://hyperpay.docs.oppwa.com/reference/resultCodes) — `200.300.404` means “invalid or missing parameter.”
 - The specified `oppwa(1).pdf` was not available among the provided files, so its page-specific text remains unverified.
+
+## UAT sample-card run requested on 2026-11-27
+
+The UAT configuration was checked before this run: the selected gateway was AFS, environment was `test`, host was `eu-test.oppwa.com`, and omitted `testMode` uses OPPWA's documented INTERNAL default. No live host or live credential was used.
+
+I submitted the remaining three supplied Mastercard simulator cards and one official non-3DS Mastercard control card. Each checkout and hosted widget loaded; each widget payment request returned HTTP 200 with an HTML response and navigated back to the local receipt. The app recorded each payment as pending. The three supplied cards did not show a 3DS challenge. The non-3DS control also did not yield a verified transaction, so the issue is not isolated to the challenge screen.
+
+For the recent test records, the local merchant references are `EWP-2026-0000015` through `EWP-2026-0000018`; each row remains pending. The gateway checkout references are stored as checkout IDs. There is **no provider payment transaction ID to save**: provider transaction ID, result code, type, and brand remain unset because no transaction status was returned. OPPWA status reconciliation returned body result code `200.300.404`; read-only v1 and v3 transaction-report queries by merchant reference also returned HTTP 400 with the same body code. I did not substitute the checkout ID or merchant reference for a PSP transaction ID.
+
+No payment was marked paid, deleted, or reset. Temporary browser screenshots containing test card input were removed after the run, and the local PHP server used for the browser test was stopped.
