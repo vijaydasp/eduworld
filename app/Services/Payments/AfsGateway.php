@@ -6,6 +6,7 @@ use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use InvalidArgumentException;
 use LogicException;
@@ -39,10 +40,20 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
     public function available(): bool
     {
         $baseUrl = $this->baseUrl();
+        $environment = (string) config('payments.environment', 'test');
+        $expectedHost = match ($environment) {
+            'test' => 'eu-test.oppwa.com',
+            'live' => 'eu-prod.oppwa.com',
+            default => null,
+        };
 
         return $this->entityId() !== null
             && $this->accessToken() !== null
             && $baseUrl !== null
+            && (string) config('payments.currency') === 'BHD'
+            && (string) config('payments.default_type') === 'DB'
+            && $expectedHost !== null
+            && hash_equals($expectedHost, (string) parse_url($baseUrl, PHP_URL_HOST))
             && in_array((string) parse_url($baseUrl, PHP_URL_HOST), (array) config('payments.checkout_hosts', []), true);
     }
 
@@ -173,7 +184,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
     {
         $classification = AfsResultCode::classify($this->resultCode($status));
 
-        if ($classification === AfsResultCode::PENDING) {
+        if (in_array($classification, [AfsResultCode::PENDING, AfsResultCode::REVIEW_REQUIRED], true)) {
             throw new DeferredPaymentWebhook('The AFS transaction is not in a final settlement state.');
         }
 
@@ -208,7 +219,16 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
     {
         $classification = AfsResultCode::classify($this->resultCode($status));
 
-        if ($classification === AfsResultCode::PENDING) {
+        if (in_array($classification, [AfsResultCode::PENDING, AfsResultCode::REVIEW_REQUIRED], true)) {
+            Log::info('COPYandPAY returned a non-final checkout result.', [
+                'payment_id' => $payment->id,
+                'result_code' => $this->resultCode($status),
+                'result_description' => $this->resultDescription($status),
+                'payment_type' => $this->providerString($status, 'paymentType'),
+                'payment_brand' => $this->providerString($status, 'paymentBrand'),
+                'three_d_secure' => $this->threeDSecureDetails($status),
+            ]);
+
             return null;
         }
 
@@ -254,6 +274,9 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             paymentBrand: $this->providerString($status, 'paymentBrand'),
             resultCode: $this->resultCode($status),
             transactionTimestamp: $this->transactionTimestamp($status),
+            resultDescription: $this->resultDescription($status),
+            providerEntityId: $this->providerEntityId($status),
+            threeDSecureDetails: $this->threeDSecureDetails($status),
         );
     }
 
@@ -303,6 +326,9 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             paymentBrand: $this->providerString($status, 'paymentBrand'),
             resultCode: $this->resultCode($status),
             transactionTimestamp: $this->transactionTimestamp($status),
+            resultDescription: $this->resultDescription($status),
+            providerEntityId: $this->providerEntityId($status),
+            threeDSecureDetails: $this->threeDSecureDetails($status),
         );
     }
 
@@ -369,7 +395,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         }
 
         $entityId = data_get($data, 'authentication.entityId');
-        if (! is_string($entityId) || ! hash_equals($this->requiredEntityId(), $entityId)) {
+        if (is_string($entityId) && $entityId !== '' && ! hash_equals($this->requiredEntityId(), $entityId)) {
             throw new InvalidPaymentWebhook('AFS returned a payment status for an unexpected merchant entity.');
         }
 
@@ -500,6 +526,44 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         return is_string($code) ? $code : '';
     }
 
+    /** @param array<string, mixed> $status */
+    private function resultDescription(array $status): ?string
+    {
+        $description = data_get($status, 'result.description');
+
+        return is_string($description) && $description !== '' ? mb_substr($description, 0, 1000) : null;
+    }
+
+    /** @param array<string, mixed> $status */
+    private function providerEntityId(array $status): ?string
+    {
+        $entityId = data_get($status, 'authentication.entityId');
+
+        return is_string($entityId) && $entityId !== '' ? mb_substr($entityId, 0, 64) : null;
+    }
+
+    /**
+     * Preserve non-secret 3DS outcome metadata for reconciliation without storing CAVV/AAV.
+     *
+     * @param  array<string, mixed>  $status
+     * @return array<string, string>
+     */
+    private function threeDSecureDetails(array $status): array
+    {
+        $details = [];
+        foreach ([
+            'version', 'authenticationStatus', 'eci', 'dsTransactionId', 'acsTransactionId',
+            'challengeMandatedIndicator', 'authType', 'transactionStatusReason',
+        ] as $key) {
+            $value = data_get($status, 'threeDSecure.'.$key);
+            if (is_string($value) && $value !== '') {
+                $details[$key] = mb_substr($value, 0, 100);
+            }
+        }
+
+        return $details;
+    }
+
     /**
      * @return array<string, string>
      */
@@ -513,7 +577,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             'entityId' => $entityId,
             'amount' => BhdAmount::gatewayAmount((string) $payment->amount),
             'currency' => (string) $payment->currency,
-            'paymentType' => 'DB',
+            'paymentType' => (string) config('payments.default_type', 'DB'),
             'merchantTransactionId' => (string) $payment->transaction_reference,
             'merchantInvoiceId' => (string) $payment->transaction_reference,
             'descriptor' => mb_substr((string) config('payments.afs.descriptor', 'Edu World'), 0, 127),
@@ -523,6 +587,10 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             'customer.language' => 'EN',
             'billing.country' => 'BH',
         ];
+
+        if (config('payments.afs.widget_integrity')) {
+            $parameters['integrity'] = 'true';
+        }
 
         if ($payment->email) {
             $parameters['customer.email'] = (string) $payment->email;

@@ -19,13 +19,20 @@ final readonly class VerifiedPaymentEvent
         public ?string $paymentBrand = null,
         public ?string $resultCode = null,
         public ?string $transactionTimestamp = null,
+        public ?string $resultDescription = null,
+        public ?string $providerEntityId = null,
+        public array $threeDSecureDetails = [],
     ) {
-        if ($eventId === '' || strlen($eventId) > 150 || $transactionReference === '' || $gatewayReference === '' || strlen($gatewayReference) > 150 || ! in_array($status, ['paid', 'partially_paid', 'failed', 'refunded'], true)) {
+        if ($eventId === '' || strlen($eventId) > 150 || $transactionReference === '' || $gatewayReference === '' || strlen($gatewayReference) > 150 || ! in_array($status, ['paid', 'partially_paid', 'failed', 'review_required', 'refunded'], true)) {
             throw new InvalidArgumentException('Invalid verified payment event.');
         }
 
         if ($providerReference !== null && ($providerReference === '' || strlen($providerReference) > 150)) {
             throw new InvalidArgumentException('Invalid provider reference.');
+        }
+
+        if ($resultDescription !== null && strlen($resultDescription) > 1000) {
+            throw new InvalidArgumentException('Invalid provider result description.');
         }
 
         BhdAmount::minorUnits($amount);
@@ -38,7 +45,8 @@ final readonly class VerifiedPaymentEvent
             $this->transactionReference, $this->gatewayReference, $this->status,
             BhdAmount::normalize($this->amount), BhdAmount::normalize($this->amountReceived), $this->currency,
             $this->providerReference, $this->paymentType, $this->paymentBrand, $this->resultCode,
-            $this->transactionTimestamp,
+            $this->transactionTimestamp, $this->resultDescription, $this->providerEntityId,
+            $this->threeDSecureDetails,
         ], JSON_THROW_ON_ERROR));
     }
 }

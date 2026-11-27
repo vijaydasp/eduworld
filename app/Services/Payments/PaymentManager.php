@@ -163,6 +163,8 @@ class PaymentManager
         )));
 
         $response['checkout_started_at'] = now()->toIso8601String();
+        $response['environment'] = (string) config('payments.environment', 'test');
+        $response['checkout_payment_type'] = (string) config('payments.default_type', 'DB');
         $response['previous_checkout_references'] = $previous;
         if ($integrity !== null) {
             $response['checkout_integrity'] = $integrity;
@@ -220,8 +222,13 @@ class PaymentManager
 
         try {
             $event = $gateway->verifyCheckoutReturn($payment, $request);
-        } catch (Throwable) {
-            Log::warning('Payment return could not be verified.', ['payment_id' => $payment->id, 'gateway' => $gateway->name()]);
+        } catch (Throwable $exception) {
+            Log::warning('Payment return could not be verified.', [
+                'payment_id' => $payment->id,
+                'gateway' => $gateway->name(),
+                'exception' => $exception::class,
+                'message' => mb_substr(str_replace(["\r", "\n"], ' ', $exception->getMessage()), 0, 300),
+            ]);
 
             return false;
         }
@@ -305,7 +312,10 @@ class PaymentManager
                     'provider_payment_type' => $event->paymentType,
                     'provider_payment_brand' => $event->paymentBrand,
                     'provider_result_code' => $event->resultCode,
+                    'provider_result_description' => $event->resultDescription,
+                    'provider_entity_id' => $event->providerEntityId,
                     'provider_transaction_at' => $event->transactionTimestamp,
+                    'three_d_secure' => $event->threeDSecureDetails !== [] ? $event->threeDSecureDetails : null,
                 ], fn (mixed $value): bool => $value !== null),
             ]);
             $this->syncApplication($payment->application_id);

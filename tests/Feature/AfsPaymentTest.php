@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Payment;
+use App\Models\User;
 use App\Notifications\PaymentConfirmed;
 use App\Services\Payments\PaymentManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -62,11 +63,11 @@ class AfsPaymentTest extends TestCase
             'email' => 'payer@example.test',
             'entered_reference' => 'EW-2026-00001',
             'service' => 'study_abroad',
-            'amount' => '12.345',
+            'amount' => '12.340',
             'terms' => '1',
             'application_id' => 999,
             'status' => 'paid',
-            'amount_received' => '12.345',
+            'amount_received' => '12.340',
         ]);
 
         $response->assertRedirect();
@@ -74,13 +75,13 @@ class AfsPaymentTest extends TestCase
         $this->assertSame('afs', $payment->gateway);
         $this->assertSame('pending', $payment->status);
         $this->assertSame('0.000', $payment->amount_received);
-        $this->assertSame('12.345', $payment->amount);
+        $this->assertSame('12.340', $payment->amount);
         $this->assertNull($payment->application_id);
         $this->assertSame(self::CHECKOUT_ID, $payment->gateway_reference);
 
         Http::assertSent(fn (Request $request): bool => $request->url() === 'https://eu-test.oppwa.com/v1/checkouts'
             && $request->method() === 'POST'
-            && $request['amount'] === '12.35'
+            && $request['amount'] === '12.34'
             && $request['currency'] === 'BHD'
             && $request['paymentType'] === 'DB');
 
@@ -91,6 +92,9 @@ class AfsPaymentTest extends TestCase
             ->assertSee('https://eu-test.oppwa.com/v1/paymentWidgets.js?checkoutId='.self::CHECKOUT_ID, false)
             ->assertSee('crossorigin="anonymous"', false)
             ->assertSee('data-brands="VISA MASTER"', false)
+            ->assertSee('copyandpay-loading', false)
+            ->assertSee('onError: function()', false)
+            ->assertSee('onAfterSubmit: function()', false)
             ->assertSee($payment->transaction_reference);
     }
 
@@ -108,7 +112,7 @@ class AfsPaymentTest extends TestCase
                 'phone' => '+97333640001',
                 'email' => 'payer@example.test',
                 'service' => 'study_abroad',
-                'amount' => '12.345',
+                'amount' => '12.340',
                 'terms' => '1',
             ])
             ->assertRedirect(route('pay'))
@@ -137,7 +141,7 @@ class AfsPaymentTest extends TestCase
             'email' => 'payer@example.test',
             'entered_reference' => null,
             'service' => 'other',
-            'amount' => '12.345',
+            'amount' => '12.340',
             'remarks' => null,
         ]);
 
@@ -154,7 +158,7 @@ class AfsPaymentTest extends TestCase
                 && $request->method() === 'POST'
                 && $request->hasHeader('Authorization', 'Bearer test-access-token')
                 && $request['entityId'] === self::ENTITY_ID
-                && $request['amount'] === '12.35'
+                && $request['amount'] === '12.34'
                 && $request['currency'] === 'BHD'
                 && $request['paymentType'] === 'DB'
                 && $request['merchantTransactionId'] === $payment->transaction_reference
@@ -188,11 +192,15 @@ class AfsPaymentTest extends TestCase
         $payment->refresh();
 
         $this->assertSame('paid', $payment->status);
-        $this->assertSame('12.345', $payment->amount_received);
+        $this->assertSame('12.340', $payment->amount_received);
         $this->assertSame(self::PAYMENT_ID, $payment->gateway_response['provider_reference']);
         $this->assertSame('DB', $payment->provider_payment_type);
         $this->assertSame('MASTER', $payment->provider_payment_brand);
         $this->assertSame('000.000.000', $payment->provider_result_code);
+        $this->assertSame('Provider result', $payment->gateway_response['provider_result_description']);
+        $this->assertSame('2.2.0', $payment->gateway_response['three_d_secure']['version']);
+        $this->assertSame('Y', $payment->gateway_response['three_d_secure']['authenticationStatus']);
+        $this->assertArrayNotHasKey('verificationId', $payment->gateway_response['three_d_secure']);
         $this->assertNotNull($payment->provider_transaction_at);
         $this->assertDatabaseCount('payment_events', 1);
         $this->assertDatabaseHas('payment_events', ['event_id' => self::PAYMENT_ID.':000.000.000', 'status' => 'paid']);
@@ -230,6 +238,19 @@ class AfsPaymentTest extends TestCase
     {
         $payment = $this->pendingPayment();
         $this->fakePaymentStatus($this->providerStatus($payment, '900.100.100'));
+
+        $this->sendWebhook($this->notification($payment))
+            ->assertStatus(202)
+            ->assertJson(['received' => true, 'status' => 'pending']);
+
+        $this->assertSame('pending', $payment->fresh()->status);
+        $this->assertDatabaseCount('payment_events', 0);
+    }
+
+    public function test_result_codes_requiring_manual_review_are_not_settled_automatically(): void
+    {
+        $payment = $this->pendingPayment();
+        $this->fakePaymentStatus($this->providerStatus($payment, '000.400.000'));
 
         $this->sendWebhook($this->notification($payment))
             ->assertStatus(202)
@@ -281,7 +302,7 @@ class AfsPaymentTest extends TestCase
             'phone' => '+97333640001',
             'email' => 'payer@example.test',
             'service' => 'other',
-            'amount' => '12.345',
+            'amount' => '12.340',
         ]);
         app(PaymentManager::class)->checkout($payment);
         $payment->refresh();
@@ -291,6 +312,8 @@ class AfsPaymentTest extends TestCase
             ->assertOk()
             ->assertSee('integrity="'.$integrity.'"', false)
             ->assertSee('crossorigin="anonymous"', false);
+        Http::assertSent(fn (Request $request): bool => $request->url() === 'https://eu-test.oppwa.com/v1/checkouts'
+            && $request['integrity'] === 'true');
         Notification::assertNothingSent();
     }
 
@@ -351,10 +374,41 @@ class AfsPaymentTest extends TestCase
 
         $response->assertRedirect();
         $this->assertSame('paid', $payment->fresh()->status);
-        $this->assertSame('12.345', $payment->fresh()->amount_received);
+        $this->assertSame('12.340', $payment->fresh()->amount_received);
         Http::assertSent(fn (Request $request): bool => $request['entityId'] === self::ENTITY_ID);
 
         $this->get((string) $response->headers->get('Location'))->assertOk()->assertSee('Payment successful');
+    }
+
+    public function test_checkout_status_can_be_verified_when_the_api_does_not_echo_the_entity_id(): void
+    {
+        $payment = $this->pendingPayment();
+        $status = $this->successfulStatus($payment);
+        unset($status['authentication']);
+        Http::fake([
+            'https://eu-test.oppwa.com/v1/checkouts/*' => Http::response($status),
+        ]);
+
+        $this->get(route('pay.return', [
+            'reference' => $payment->transaction_reference,
+            'resourcePath' => '/v1/checkouts/'.self::CHECKOUT_ID.'/payment',
+        ]))->assertRedirect();
+
+        $this->assertSame('paid', $payment->fresh()->status);
+        Http::assertSent(fn (Request $request): bool => $request['entityId'] === self::ENTITY_ID);
+    }
+
+    public function test_admin_payment_details_show_the_afs_transaction_id_separately_from_the_checkout_id(): void
+    {
+        $payment = $this->pendingPayment();
+        $payment->update(['gateway_response' => ['provider_reference' => self::PAYMENT_ID]]);
+        $this->actingAs(User::factory()->create(['role' => 'super_admin', 'is_active' => true]));
+
+        $this->get(route('admin.payments.show', $payment))
+            ->assertOk()
+            ->assertSee('AFS transaction ID')
+            ->assertSee(self::PAYMENT_ID)
+            ->assertSee('Provider checkout / offline reference');
     }
 
     public function test_shopper_return_cannot_reconcile_another_checkout(): void
@@ -371,6 +425,42 @@ class AfsPaymentTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_frontend_success_parameters_do_not_mark_a_payment_as_paid(): void
+    {
+        $payment = $this->pendingPayment();
+        Http::fake();
+
+        $this->get(route('pay.return', [
+            'reference' => $payment->transaction_reference,
+            'success' => 'true',
+            'payment_status' => 'success',
+            'paid' => 'true',
+        ]))->assertRedirect();
+
+        $this->assertSame('pending', $payment->fresh()->status);
+        Http::assertNothingSent();
+    }
+
+    public function test_environment_and_transaction_configuration_must_match_before_checkout_is_enabled(): void
+    {
+        $gateway = app(PaymentManager::class)->gateway();
+        $this->assertTrue($gateway->available());
+
+        config(['payments.environment' => 'live']);
+        $this->assertFalse($gateway->available());
+
+        config([
+            'payments.afs.base_url' => 'https://eu-prod.oppwa.com/',
+            'payments.checkout_hosts' => ['eu-prod.oppwa.com'],
+        ]);
+        $this->assertTrue($gateway->available());
+
+        config(['payments.default_type' => 'PA']);
+        $this->assertFalse($gateway->available());
+        config(['payments.default_type' => 'DB', 'payments.currency' => 'USD']);
+        $this->assertFalse($gateway->available());
+    }
+
     public function test_a_full_refund_notification_is_matched_to_the_settled_payment(): void
     {
         $originalPaymentId = '8ac7a4c797662439019773da2ea107e1';
@@ -381,8 +471,8 @@ class AfsPaymentTest extends TestCase
             'gateway' => 'afs',
             'gateway_reference' => self::CHECKOUT_ID,
             'status' => 'paid',
-            'amount' => '12.345',
-            'amount_received' => '12.345',
+            'amount' => '12.340',
+            'amount_received' => '12.340',
             'paid_at' => now(),
             'gateway_response' => ['provider_reference' => $originalPaymentId],
         ]);
@@ -392,7 +482,7 @@ class AfsPaymentTest extends TestCase
                 'id' => $refundPaymentId,
                 'referencedId' => $originalPaymentId,
                 'paymentType' => 'RF',
-                'amount' => '12.345',
+                'amount' => '12.340',
                 'currency' => 'BHD',
                 'result' => ['code' => '000.000.000', 'description' => 'Transaction succeeded'],
                 'authentication' => ['entityId' => self::ENTITY_ID],
@@ -422,7 +512,7 @@ class AfsPaymentTest extends TestCase
             'gateway' => 'afs',
             'gateway_reference' => self::CHECKOUT_ID,
             'status' => 'pending',
-            'amount' => '12.345',
+            'amount' => '12.340',
             'amount_received' => '0.000',
             'currency' => 'BHD',
             'channel' => 'gateway',
@@ -442,11 +532,17 @@ class AfsPaymentTest extends TestCase
             'id' => self::PAYMENT_ID,
             'paymentType' => 'DB',
             'paymentBrand' => 'MASTER',
-            'amount' => '12.345',
+            'amount' => '12.340',
             'currency' => 'BHD',
             'timestamp' => now()->toIso8601String(),
             'merchantTransactionId' => $payment->transaction_reference,
             'result' => ['code' => $code, 'description' => 'Provider result'],
+            'threeDSecure' => [
+                'version' => '2.2.0',
+                'authenticationStatus' => 'Y',
+                'eci' => '05',
+                'verificationId' => 'must-not-be-stored',
+            ],
             'authentication' => ['entityId' => self::ENTITY_ID],
         ];
     }
@@ -490,6 +586,6 @@ class AfsPaymentTest extends TestCase
     /** @return array<string, mixed> */
     private function paymentData(): array
     {
-        return ['customer_name' => 'Test Applicant', 'phone' => '+97333640001', 'email' => 'payer@example.test', 'service' => 'other', 'amount' => '12.345', 'terms' => '1'];
+        return ['customer_name' => 'Test Applicant', 'phone' => '+97333640001', 'email' => 'payer@example.test', 'service' => 'other', 'amount' => '12.340', 'terms' => '1'];
     }
 }

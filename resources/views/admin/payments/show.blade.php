@@ -12,8 +12,11 @@
     <dt>Expected amount</dt><dd>BHD {{ $payment->amount }}</dd><dt>Received amount</dt><dd>BHD {{ $payment->amount_received }}</dd>
     <dt>Status</dt><dd><span class="badge">{{ str($payment->status)->replace('_', ' ')->title() }}</span></dd>
     <dt>Channel</dt><dd>{{ $payment->channel === 'offline' ? 'Offline receipt recorded by an administrator' : 'Online payment request' }}</dd>
-    <dt>Provider</dt><dd>{{ $payment->gateway }}</dd><dt>Provider / offline reference</dt><dd>{{ $payment->gateway_reference ?: ($payment->offline_reference ?: 'Not available') }}</dd>
+    <dt>Provider</dt><dd>{{ $payment->gateway }}</dd><dt>Provider checkout / offline reference</dt><dd>{{ $payment->gateway_reference ?: ($payment->offline_reference ?: 'Not available') }}</dd>
     @if ($payment->channel === 'gateway')
+        @if ($payment->gateway === 'afs')
+            <dt>AFS transaction ID</dt><dd>{{ data_get($payment->gateway_response, 'provider_reference') ?: 'Not available' }}</dd>
+        @endif
         <dt>Provider payment type</dt><dd>{{ $payment->provider_payment_type ?: 'Not available' }}</dd>
         <dt>Provider payment brand</dt><dd>{{ $payment->provider_payment_brand ?: 'Not available' }}</dd>
         <dt>Provider result code</dt><dd>{{ $payment->provider_result_code ?: 'Not available' }}</dd>

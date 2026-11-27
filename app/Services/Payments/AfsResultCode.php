@@ -16,6 +16,8 @@ final class AfsResultCode
 
     public const FAILED = 'failed';
 
+    public const REVIEW_REQUIRED = 'review_required';
+
     public const PENDING = 'pending';
 
     /**
@@ -36,12 +38,18 @@ final class AfsResultCode
      */
     private const PENDING_PATTERN = '/\A(?:000\.200\.|800\.400\.5|100\.400\.500)/';
 
+    private const REVIEW_PATTERN = '/\A000\.400\.(?:0(?!3)\d{2}|100)\z/';
+
     public static function classify(?string $code): string
     {
         $code = trim((string) $code);
 
         if ($code === '') {
             return self::PENDING;
+        }
+
+        if (preg_match(self::REVIEW_PATTERN, $code) === 1) {
+            return self::REVIEW_REQUIRED;
         }
 
         if (preg_match(self::PENDING_PATTERN, $code) === 1) {

@@ -38,8 +38,16 @@ class StorePaymentRequest extends FormRequest
                     $minor = BhdAmount::minorUnits((string) $value);
                     if ($minor < 1 || $minor > BhdAmount::minorUnits(config('payments.maximum_amount'))) {
                         $fail('Enter a BHD amount between 0.001 and '.config('payments.maximum_amount').'.');
+                    } elseif (config('payments.driver') === 'afs' && ! $this instanceof StoreOfflinePaymentRequest) {
+                        BhdAmount::gatewayAmount((string) $value);
                     }
-                } catch (InvalidArgumentException) {
+                } catch (InvalidArgumentException $exception) {
+                    if (str_starts_with($exception->getMessage(), 'AFS accepts')) {
+                        $fail($exception->getMessage());
+
+                        return;
+                    }
+
                     $fail('Enter an amount with no more than three decimal places.');
                 }
             }],
