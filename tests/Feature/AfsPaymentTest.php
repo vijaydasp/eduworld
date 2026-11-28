@@ -10,7 +10,6 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -24,6 +23,8 @@ class AfsPaymentTest extends TestCase
     private const CHECKOUT_ID = '8ac7a4c797662439019773da2ea107ec';
 
     private const PAYMENT_ID = '8ac7a4c797662439019773da2ea107ed';
+
+    private const NEXT_CHECKOUT_ID = '8ac7a4c797662439019773da2ea107ee';
 
     protected function setUp(): void
     {
@@ -260,19 +261,16 @@ class AfsPaymentTest extends TestCase
         $this->assertDatabaseCount('payment_events', 0);
     }
 
-    public function test_payment_status_requests_are_limited_to_two_per_checkout_per_minute(): void
+    public function test_checkout_return_is_checked_once_and_the_next_attempt_uses_a_fresh_checkout(): void
     {
-        RateLimiter::clear('afs-status:'.hash('sha256', self::CHECKOUT_ID));
+        $payment = $this->pendingPayment();
         Http::fake([
-            'https://eu-test.oppwa.com/v1/checkouts/*' => Http::response([
-                'id' => self::PAYMENT_ID,
-                'paymentType' => 'DB',
-                'merchantTransactionId' => 'EWP-2026-0000123',
-                'result' => ['code' => '000.200.000'],
-                'authentication' => ['entityId' => self::ENTITY_ID],
+            'https://eu-test.oppwa.com/v1/checkouts/*/payment' => Http::response($this->providerStatus($payment, '000.200.000')),
+            'https://eu-test.oppwa.com/v1/checkouts' => Http::response([
+                'id' => self::NEXT_CHECKOUT_ID,
+                'result' => ['code' => '000.200.100', 'description' => 'successfully created checkout'],
             ]),
         ]);
-        $payment = $this->pendingPayment();
 
         foreach (range(1, 3) as $_) {
             $this->get(route('pay.return', [
@@ -281,8 +279,20 @@ class AfsPaymentTest extends TestCase
             ]))->assertRedirect();
         }
 
+        $payment->refresh();
+        $this->assertSame('pending', $payment->status);
+        $this->assertNotNull(data_get($payment->gateway_response, 'checkout_status_requested_at'));
+
+        $checkout = app(PaymentManager::class)->checkout($payment);
+
+        $this->assertNotNull($checkout);
+        $payment->refresh();
+        $this->assertSame(self::NEXT_CHECKOUT_ID, $payment->gateway_reference);
+        $this->assertNull(data_get($payment->gateway_response, 'checkout_status_requested_at'));
+
         Http::assertSentCount(2);
-        $this->assertSame('pending', $payment->fresh()->status);
+        $statusRequests = Http::recorded()->filter(fn (array $recorded): bool => $recorded[0]->method() === 'GET');
+        $this->assertCount(1, $statusRequests);
     }
 
     public function test_widget_uses_checkout_integrity_when_configured(): void

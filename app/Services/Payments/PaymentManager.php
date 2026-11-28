@@ -126,6 +126,7 @@ class PaymentManager
     {
         if (! $gateway instanceof RendersCheckoutWidget
             || ! $payment->gateway_reference
+            || data_get($payment->gateway_response, 'checkout_status_requested_at') !== null
             || ! hash_equals($gateway->name(), (string) $payment->gateway)) {
             return null;
         }
@@ -163,6 +164,7 @@ class PaymentManager
         )));
 
         $response['checkout_started_at'] = now()->toIso8601String();
+        unset($response['checkout_status_requested_at']);
         $response['environment'] = (string) config('payments.environment', 'test');
         $response['checkout_payment_type'] = (string) config('payments.default_type', 'DB');
         $response['previous_checkout_references'] = $previous;

@@ -8,6 +8,7 @@ return [
     'environment' => env('PAYMENT_ENVIRONMENT', 'test'),
     'currency' => env('PAYMENT_CURRENCY', 'BHD'),
     'default_type' => env('PAYMENT_DEFAULT_TYPE', 'DB'),
+    'ca_bundle' => env('PAYMENT_CA_BUNDLE') ?: true,
     'maximum_amount' => '100000.000',
     'display_timezone' => 'Asia/Kolkata',
     // Minutes an existing provider checkout session may be reused instead of replaced.

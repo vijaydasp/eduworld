@@ -3,8 +3,10 @@
 namespace App\Services\Payments;
 
 use App\Models\Payment;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
@@ -63,7 +65,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         $entityId = $this->requiredEntityId();
         $accessToken = $this->requiredAccessToken();
 
-        $response = Http::withToken($accessToken)
+        $response = $this->httpClient()->withToken($accessToken)
             ->asForm()
             ->acceptJson()
             ->timeout(20)
@@ -157,6 +159,10 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
                 throw new InvalidPaymentWebhook('The AFS return path does not belong to this checkout.');
             }
 
+            if (! $this->claimCheckoutStatusLookup($payment)) {
+                return null;
+            }
+
             $status = $this->status(ltrim($resourcePath, '/'), allowMissing: true, checkoutReference: $payment->gateway_reference);
 
             return $status === null ? null : $this->checkoutEvent($status, $payment);
@@ -165,6 +171,10 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         $paymentId = $request->query('id');
 
         if (is_string($paymentId) && preg_match(self::PAYMENT_ID_PATTERN, $paymentId) === 1) {
+            if (! $this->claimCheckoutStatusLookup($payment)) {
+                return null;
+            }
+
             $status = $this->paymentStatus($paymentId, (string) $payment->gateway_reference);
 
             if (($status['merchantTransactionId'] ?? null) !== $payment->transaction_reference) {
@@ -175,6 +185,32 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         }
 
         return null;
+    }
+
+    private function claimCheckoutStatusLookup(Payment $payment): bool
+    {
+        return DB::transaction(function () use ($payment): bool {
+            $lockedPayment = Payment::query()->whereKey($payment->id)->lockForUpdate()->first();
+
+            if (! $lockedPayment
+                || $lockedPayment->status !== 'pending'
+                || ! $lockedPayment->gateway_reference
+                || ! hash_equals((string) $payment->gateway_reference, (string) $lockedPayment->gateway_reference)) {
+                return false;
+            }
+
+            $response = (array) ($lockedPayment->gateway_response ?? []);
+
+            if (isset($response['checkout_status_requested_at'])) {
+                return false;
+            }
+
+            $response['checkout_status_requested_at'] = now()->toIso8601String();
+            $lockedPayment->update(['gateway_response' => $response]);
+            $payment->setRawAttributes($lockedPayment->getAttributes(), true);
+
+            return true;
+        });
     }
 
     /**
@@ -220,7 +256,7 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
         $classification = AfsResultCode::classify($this->resultCode($status));
 
         if (in_array($classification, [AfsResultCode::PENDING, AfsResultCode::REVIEW_REQUIRED], true)) {
-            Log::info('COPYandPAY returned a non-final checkout result.', [
+            Log::warning('COPYandPAY returned a non-final checkout result.', [
                 'payment_id' => $payment->id,
                 'result_code' => $this->resultCode($status),
                 'result_description' => $this->resultDescription($status),
@@ -375,12 +411,26 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
             throw new DeferredPaymentWebhook('The AFS status request limit for this checkout has been reached.');
         }
 
-        $response = Http::withToken($this->requiredAccessToken())
+        $response = $this->httpClient()->withToken($this->requiredAccessToken())
             ->acceptJson()
             ->timeout(15)
             ->get($this->endpoint($path), ['entityId' => $this->requiredEntityId()]);
 
         if ($allowMissing && in_array($response->status(), [400, 404], true)) {
+            $providerBody = $response->json();
+            $providerResult = is_array($providerBody) ? data_get($providerBody, 'result') : null;
+            $responseBody = is_array($providerResult)
+                ? ['result' => array_intersect_key($providerResult, array_flip(['code', 'description', 'parameter']))]
+                : null;
+
+            Log::warning('AFS checkout status was not available.', [
+                'method' => 'GET',
+                'request_url' => $this->endpoint($path),
+                'checkout_reference' => $checkoutReference,
+                'http_status' => $response->status(),
+                'response_body' => $responseBody,
+            ]);
+
             return null;
         }
 
@@ -392,6 +442,21 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
 
         if (! is_array($data)) {
             throw new InvalidPaymentWebhook('AFS returned an unexpected payment status.');
+        }
+
+        if ($allowMissing) {
+            $providerResult = data_get($data, 'result');
+            $responseBody = is_array($providerResult)
+                ? ['result' => array_intersect_key($providerResult, array_flip(['code', 'description', 'parameter']))]
+                : null;
+
+            Log::warning('AFS COPYandPAY status response received.', [
+                'method' => 'GET',
+                'request_url' => $this->endpoint($path),
+                'checkout_reference' => $checkoutReference,
+                'http_status' => $response->status(),
+                'response_body' => $responseBody,
+            ]);
         }
 
         $entityId = data_get($data, 'authentication.entityId');
@@ -656,5 +721,10 @@ final class AfsGateway implements PaymentGatewayInterface, RendersCheckoutWidget
     private function requiredBaseUrl(): string
     {
         return $this->baseUrl() ?? throw new LogicException('The AFS base URL is not configured.');
+    }
+
+    private function httpClient(): PendingRequest
+    {
+        return Http::withOptions(['verify' => config('payments.ca_bundle', true)]);
     }
 }
